@@ -1,0 +1,13 @@
+# Binaries
+sanshain-go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Coverage
+*.out
