@@ -1,5 +1,5 @@
 # Binaries
-sanshain-go
+/sanshain-go
 *.exe
 *.exe~
 *.dll
