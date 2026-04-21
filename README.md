@@ -58,4 +58,4 @@ We recommend using `go generate` to automate the process. See [docs/integration.
 
 ## License
 
-AGPL-3.0
+This project is licensed under the GNU Affero General Public License (AGPL-3.0). See the [LICENSE](LICENSE) file for details.
