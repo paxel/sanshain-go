@@ -8,9 +8,8 @@ import (
 func TestLoadConfig(t *testing.T) {
 	content := `
 sanshainUrl: http://localhost:8080
-clientName: test-client
+serviceName: test-service
 provide:
-  serviceName: test-service
   openApiFile: api.yaml
 requires:
   - serviceName: other-service
@@ -40,11 +39,11 @@ requires:
 	if cfg.SanshainURL != "http://localhost:8080" {
 		t.Errorf("expected http://localhost:8080, got %s", cfg.SanshainURL)
 	}
-	if cfg.ClientName != "test-client" {
-		t.Errorf("expected test-client, got %s", cfg.ClientName)
+	if cfg.ServiceName != "test-service" {
+		t.Errorf("expected test-service, got %s", cfg.ServiceName)
 	}
-	if cfg.Provide.ServiceName != "test-service" {
-		t.Errorf("expected test-service, got %s", cfg.Provide.ServiceName)
+	if cfg.Provide.OpenApiFile != "api.yaml" {
+		t.Errorf("expected api.yaml, got %s", cfg.Provide.OpenApiFile)
 	}
 	if len(cfg.Requires) != 1 {
 		t.Errorf("expected 1 require, got %d", len(cfg.Requires))
@@ -53,16 +52,16 @@ requires:
 
 func TestValidateConfig(t *testing.T) {
 	t.Run("Missing sanshainUrl", func(t *testing.T) {
-		cfg := &SanshainConfig{ClientName: "test"}
+		cfg := &SanshainConfig{ServiceName: "test"}
 		if err := validateConfig(cfg); err == nil {
 			t.Error("expected error for missing sanshainUrl")
 		}
 	})
 
-	t.Run("Missing clientName", func(t *testing.T) {
+	t.Run("Missing serviceName", func(t *testing.T) {
 		cfg := &SanshainConfig{SanshainURL: "http://test"}
 		if err := validateConfig(cfg); err == nil {
-			t.Error("expected error for missing clientName")
+			t.Error("expected error for missing serviceName")
 		}
 	})
 }

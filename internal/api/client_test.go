@@ -43,7 +43,7 @@ func TestSanshainClient_Require(t *testing.T) {
 	defer ts.Close()
 
 	client := NewSanshainClient(ts.URL, "token", false)
-	res, err := client.Require("client", "service", "main", "/path", "GET", 0, false)
+	res, err := client.Require("client", "service", "main", "/path", "GET", 0, false, "openapi")
 	if err != nil {
 		t.Errorf("Require failed: %v", err)
 	}
