@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"compress/gzip"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,8 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
+	"unicode"
 
 	"github.com/paxel/sanshain/sanshain-go/internal/utils"
 )
@@ -18,6 +21,7 @@ type ProvidePayload struct {
 	Branch      string `json:"branch"`
 	OpenApiYaml string `json:"openapi_yaml"`
 	DryRun      bool   `json:"dry_run,omitempty"`
+	ApiType     string `json:"api_type,omitempty"`
 }
 
 type ProvideAsyncApiPayload struct {
@@ -25,6 +29,7 @@ type ProvideAsyncApiPayload struct {
 	Branch       string `json:"branch"`
 	AsyncApiYaml string `json:"asyncapi_yaml"`
 	DryRun       bool   `json:"dry_run,omitempty"`
+	ApiType      string `json:"api_type,omitempty"`
 }
 
 type ProvideProtoPayload struct {
@@ -32,6 +37,7 @@ type ProvideProtoPayload struct {
 	Branch       string `json:"branch"`
 	ProtoContent string `json:"proto_content"`
 	DryRun       bool   `json:"dry_run,omitempty"`
+	ApiType      string `json:"api_type,omitempty"`
 }
 
 type RequireBundleEndpoint struct {
@@ -71,14 +77,23 @@ func NewSanshainClient(baseURL, token string, insecure bool) *SanshainClient {
 }
 
 func (c *SanshainClient) Provide(payload ProvidePayload, compression bool) error {
+	if payload.ApiType == "" {
+		payload.ApiType = "openapi"
+	}
 	return c.post("/provide", payload, compression)
 }
 
 func (c *SanshainClient) ProvideAsyncApi(payload ProvideAsyncApiPayload, compression bool) error {
+	if payload.ApiType == "" {
+		payload.ApiType = "asyncapi"
+	}
 	return c.post("/provide/asyncapi", payload, compression)
 }
 
 func (c *SanshainClient) ProvideProto(payload ProvideProtoPayload, compression bool) error {
+	if payload.ApiType == "" {
+		payload.ApiType = "proto"
+	}
 	return c.post("/provide/grpc", payload, compression)
 }
 
@@ -119,8 +134,8 @@ func (c *SanshainClient) post(path string, payload interface{}, compression bool
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+		body, _ := c.readBody(resp)
+		return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, sanitize(body))
 	}
 
 	return nil
@@ -139,12 +154,17 @@ func (c *SanshainClient) Require(clientName, serviceName, branch, path, method s
 		return "", err
 	}
 
+	if apiType == "" {
+		apiType = "openapi"
+	}
+
 	q := u.Query()
 	q.Set("clientname", clientName)
 	q.Set("servicename", serviceName)
 	q.Set("branch", branch)
 	q.Set("path", path)
 	q.Set("method", method)
+	q.Set("api_type", apiType)
 	if timeout > 0 {
 		q.Set("timeout", strconv.Itoa(timeout))
 	}
@@ -167,19 +187,22 @@ func (c *SanshainClient) Require(clientName, serviceName, branch, path, method s
 	}
 	defer resp.Body.Close()
 
-	bodyBytes, err := io.ReadAll(resp.Body)
+	body, err := c.readBody(resp)
 	if err != nil {
 		return "", err
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+		return "", fmt.Errorf("request failed with status %d: %s", resp.StatusCode, sanitize(body))
 	}
 
-	return string(bodyBytes), nil
+	return body, nil
 }
 
 func (c *SanshainClient) RequireBundle(payload RequireBundlePayload, compression bool) (string, error) {
+	if payload.ApiType == "" {
+		payload.ApiType = "openapi"
+	}
 	var body io.Reader
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
@@ -215,14 +238,49 @@ func (c *SanshainClient) RequireBundle(payload RequireBundlePayload, compression
 	}
 	defer resp.Body.Close()
 
-	bodyBytes, err := io.ReadAll(resp.Body)
+	body, err := c.readBody(resp)
 	if err != nil {
 		return "", err
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+		return "", fmt.Errorf("request failed with status %d: %s", resp.StatusCode, sanitize(body))
+	}
+
+	return body, nil
+}
+
+func (c *SanshainClient) readBody(resp *http.Response) (string, error) {
+	var reader io.ReadCloser
+	var err error
+
+	contentEncoding := resp.Header.Get("Content-Encoding")
+	if contentEncoding == "gzip" {
+		reader, err = gzip.NewReader(resp.Body)
+		if err != nil {
+			return "", err
+		}
+		defer reader.Close()
+	} else {
+		reader = resp.Body
+	}
+
+	bodyBytes, err := io.ReadAll(reader)
+	if err != nil {
+		return "", err
 	}
 
 	return string(bodyBytes), nil
+}
+
+func sanitize(s string) string {
+	if len(s) > 1000 {
+		s = s[:1000] + "... (truncated)"
+	}
+	return strings.Map(func(r rune) rune {
+		if unicode.IsPrint(r) || unicode.IsSpace(r) {
+			return r
+		}
+		return '?'
+	}, s)
 }
