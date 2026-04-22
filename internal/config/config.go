@@ -14,6 +14,7 @@ type EndpointConfig struct {
 
 type RequireConfig struct {
 	ServiceName     string           `yaml:"serviceName"`
+	ApiType         string           `yaml:"apiType,omitempty"`
 	Branch          string           `yaml:"branch,omitempty"`
 	OutputDirectory string           `yaml:"outputDirectory"`
 	Timeout         int              `yaml:"timeout,omitempty"`
@@ -21,17 +22,23 @@ type RequireConfig struct {
 }
 
 type ProvideConfig struct {
-	ServiceName string `yaml:"serviceName"`
-	OpenApiFile string `yaml:"openApiFile"`
-	Branch      string `yaml:"branch,omitempty"`
+	File         string `yaml:"file,omitempty"`
+	ApiType      string `yaml:"apiType,omitempty"`
+	Branch       string `yaml:"branch,omitempty"`
+	OpenApiFile  string `yaml:"openApiFile,omitempty"`
+	AsyncApiFile string `yaml:"asyncApiFile,omitempty"`
+	ProtoFile    string `yaml:"protoFile,omitempty"`
 }
 
 type SanshainConfig struct {
 	SanshainURL string          `yaml:"sanshainUrl"`
-	ClientName  string          `yaml:"clientName"`
+	ServiceName string          `yaml:"serviceName"`
+	ClientName  string          `yaml:"clientName,omitempty"` // alias
 	Timeout     int             `yaml:"timeout,omitempty"`
 	Compression bool            `yaml:"compression,omitempty"`
+	BestEffort  bool            `yaml:"bestEffort,omitempty"`
 	Provide     *ProvideConfig  `yaml:"provide,omitempty"`
+	Provides    []ProvideConfig `yaml:"provides,omitempty"`
 	Requires    []RequireConfig `yaml:"requires,omitempty"`
 }
 
@@ -57,16 +64,28 @@ func validateConfig(config *SanshainConfig) error {
 	if config.SanshainURL == "" {
 		return fmt.Errorf("missing required field: sanshainUrl")
 	}
-	if config.ClientName == "" {
-		return fmt.Errorf("missing required field: clientName")
+	if config.ServiceName == "" && config.ClientName != "" {
+		config.ServiceName = config.ClientName
+	}
+	if config.ServiceName == "" {
+		return fmt.Errorf("missing required field: serviceName")
+	}
+
+	validateProvide := func(p *ProvideConfig, i int) error {
+		if p.File == "" && p.OpenApiFile == "" && p.AsyncApiFile == "" && p.ProtoFile == "" {
+			return fmt.Errorf("at least one of file, openApiFile, asyncApiFile, or protoFile must be specified in provide[%d]", i)
+		}
+		return nil
 	}
 
 	if config.Provide != nil {
-		if config.Provide.ServiceName == "" {
-			return fmt.Errorf("missing required field in provide: serviceName")
+		if err := validateProvide(config.Provide, 0); err != nil {
+			return err
 		}
-		if config.Provide.OpenApiFile == "" {
-			return fmt.Errorf("missing required field in provide: openApiFile")
+	}
+	for i := range config.Provides {
+		if err := validateProvide(&config.Provides[i], i); err != nil {
+			return err
 		}
 	}
 

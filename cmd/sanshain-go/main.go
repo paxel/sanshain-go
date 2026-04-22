@@ -44,6 +44,10 @@ func main() {
 	}
 
 	if err != nil {
+		if cfg.BestEffort {
+			fmt.Printf("Warning: %v\n", err)
+			return
+		}
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
@@ -59,35 +63,102 @@ func usage() {
 }
 
 func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig) error {
-	if cfg.Provide == nil {
+	var provides []config.ProvideConfig
+	if cfg.Provide != nil {
+		provides = append(provides, *cfg.Provide)
+	}
+	provides = append(provides, cfg.Provides...)
+
+	if len(provides) == 0 {
 		return fmt.Errorf("no provide configuration found in sanshain.yaml")
 	}
 
-	specPath := cfg.Provide.OpenApiFile
-	specData, err := os.ReadFile(specPath)
-	if err != nil {
-		return fmt.Errorf("failed to read OpenAPI file %s: %w", specPath, err)
+	defaultBranch := git.GetCurrentBranch()
+	if defaultBranch == "" {
+		defaultBranch = "main"
 	}
 
-	branch := cfg.Provide.Branch
-	if branch == "" {
-		branch = git.GetCurrentBranch()
+	provided := false
+
+	for _, p := range provides {
+		branch := p.Branch
+		if branch == "" {
+			branch = defaultBranch
+		}
+
+		if p.File != "" {
+			err := provideFile(client, cfg.ServiceName, branch, p.File, p.ApiType, cfg.Compression)
+			if err != nil {
+				return err
+			}
+			provided = true
+		}
+
+		// Backward compatibility
+		if p.OpenApiFile != "" {
+			err := provideFile(client, cfg.ServiceName, branch, p.OpenApiFile, "openapi", cfg.Compression)
+			if err != nil {
+				return err
+			}
+			provided = true
+		}
+		if p.AsyncApiFile != "" {
+			err := provideFile(client, cfg.ServiceName, branch, p.AsyncApiFile, "asyncapi", cfg.Compression)
+			if err != nil {
+				return err
+			}
+			provided = true
+		}
+		if p.ProtoFile != "" {
+			err := provideFile(client, cfg.ServiceName, branch, p.ProtoFile, "proto", cfg.Compression)
+			if err != nil {
+				return err
+			}
+			provided = true
+		}
 	}
 
-	payload := api.ProvidePayload{
-		ServiceName: cfg.Provide.ServiceName,
-		Branch:      branch,
-		OpenApiYaml: string(specData),
+	if !provided {
+		fmt.Println("No specification files found to provide.")
+	} else {
+		fmt.Println("Successfully provided spec(s).")
 	}
-
-	fmt.Printf("Providing %s (branch: %s) to %s...\n", payload.ServiceName, payload.Branch, cfg.SanshainURL)
-	err = client.Provide(payload, cfg.Compression)
-	if err != nil {
-		return err
-	}
-
-	fmt.Println("Successfully provided spec.")
 	return nil
+}
+
+func provideFile(client *api.SanshainClient, serviceName, branch, filePath, apiType string, compression bool) error {
+	specData, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to read specification file %s: %w", filePath, err)
+	}
+
+	if apiType == "" || apiType == "openapi" {
+		payload := api.ProvidePayload{
+			ServiceName: serviceName,
+			Branch:      branch,
+			OpenApiYaml: string(specData),
+		}
+		fmt.Printf("Providing OpenAPI %s (branch: %s) to %s...\n", payload.ServiceName, payload.Branch, client.BaseURL)
+		return client.Provide(payload, compression)
+	} else if apiType == "asyncapi" {
+		payload := api.ProvideAsyncApiPayload{
+			ServiceName:  serviceName,
+			Branch:       branch,
+			AsyncApiYaml: string(specData),
+		}
+		fmt.Printf("Providing AsyncAPI %s (branch: %s) to %s...\n", payload.ServiceName, payload.Branch, client.BaseURL)
+		return client.ProvideAsyncApi(payload, compression)
+	} else if apiType == "proto" || apiType == "grpc" {
+		payload := api.ProvideProtoPayload{
+			ServiceName:  serviceName,
+			Branch:       branch,
+			ProtoContent: string(specData),
+		}
+		fmt.Printf("Providing Proto %s (branch: %s) to %s...\n", payload.ServiceName, payload.Branch, client.BaseURL)
+		return client.ProvideProto(payload, compression)
+	}
+
+	return fmt.Errorf("unsupported apiType: %s", apiType)
 }
 
 func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig) error {
@@ -112,14 +183,19 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig) error
 
 		if len(req.Endpoints) == 1 {
 			endpoint := req.Endpoints[0]
-			spec, err = client.Require(cfg.ClientName, req.ServiceName, reqBranch, endpoint.Path, endpoint.Method, req.Timeout, false)
-			fileName = req.ServiceName + ".yaml"
+			spec, err = client.Require(cfg.ServiceName, req.ServiceName, reqBranch, endpoint.Path, endpoint.Method, req.Timeout, false, req.ApiType)
+			ext := "yaml"
+			if req.ApiType == "proto" {
+				ext = "proto"
+			}
+			fileName = req.ServiceName + "." + ext
 		} else {
 			payload := api.RequireBundlePayload{
-				ClientName:  cfg.ClientName,
+				ClientName:  cfg.ServiceName,
 				ServiceName: req.ServiceName,
 				Branch:      reqBranch,
 				Timeout:     req.Timeout,
+				ApiType:     req.ApiType,
 			}
 			for _, e := range req.Endpoints {
 				payload.Endpoints = append(payload.Endpoints, api.RequireBundleEndpoint{
@@ -128,7 +204,11 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig) error
 				})
 			}
 			spec, err = client.RequireBundle(payload, cfg.Compression)
-			fileName = req.ServiceName + "_bundle.yaml"
+			ext := "yaml"
+			if req.ApiType == "proto" {
+				ext = "proto"
+			}
+			fileName = req.ServiceName + "_bundle." + ext
 		}
 
 		if err != nil {

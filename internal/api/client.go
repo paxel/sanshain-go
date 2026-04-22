@@ -20,6 +20,20 @@ type ProvidePayload struct {
 	DryRun      bool   `json:"dry_run,omitempty"`
 }
 
+type ProvideAsyncApiPayload struct {
+	ServiceName  string `json:"servicename"`
+	Branch       string `json:"branch"`
+	AsyncApiYaml string `json:"asyncapi_yaml"`
+	DryRun       bool   `json:"dry_run,omitempty"`
+}
+
+type ProvideProtoPayload struct {
+	ServiceName  string `json:"servicename"`
+	Branch       string `json:"branch"`
+	ProtoContent string `json:"proto_content"`
+	DryRun       bool   `json:"dry_run,omitempty"`
+}
+
 type RequireBundleEndpoint struct {
 	Path   string `json:"path"`
 	Method string `json:"method"`
@@ -32,6 +46,7 @@ type RequireBundlePayload struct {
 	Endpoints   []RequireBundleEndpoint `json:"endpoints"`
 	Timeout     int                     `json:"timeout,omitempty"`
 	DryRun      bool                    `json:"dry_run,omitempty"`
+	ApiType     string                  `json:"api_type,omitempty"`
 }
 
 type SanshainClient struct {
@@ -56,6 +71,18 @@ func NewSanshainClient(baseURL, token string, insecure bool) *SanshainClient {
 }
 
 func (c *SanshainClient) Provide(payload ProvidePayload, compression bool) error {
+	return c.post("/provide", payload, compression)
+}
+
+func (c *SanshainClient) ProvideAsyncApi(payload ProvideAsyncApiPayload, compression bool) error {
+	return c.post("/provide/asyncapi", payload, compression)
+}
+
+func (c *SanshainClient) ProvideProto(payload ProvideProtoPayload, compression bool) error {
+	return c.post("/provide/grpc", payload, compression)
+}
+
+func (c *SanshainClient) post(path string, payload interface{}, compression bool) error {
 	var body io.Reader
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
@@ -76,7 +103,7 @@ func (c *SanshainClient) Provide(payload ProvidePayload, compression bool) error
 		body = bytes.NewReader(jsonData)
 	}
 
-	req, err := http.NewRequest("POST", c.BaseURL+"/provide", body)
+	req, err := http.NewRequest("POST", c.BaseURL+path, body)
 	if err != nil {
 		return err
 	}
@@ -99,8 +126,15 @@ func (c *SanshainClient) Provide(payload ProvidePayload, compression bool) error
 	return nil
 }
 
-func (c *SanshainClient) Require(clientName, serviceName, branch, path, method string, timeout int, dryRun bool) (string, error) {
-	u, err := url.Parse(c.BaseURL + "/require")
+func (c *SanshainClient) Require(clientName, serviceName, branch, path, method string, timeout int, dryRun bool, apiType string) (string, error) {
+	endpoint := "/require"
+	if apiType == "asyncapi" {
+		endpoint = "/require/asyncapi"
+	} else if apiType == "proto" {
+		endpoint = "/require/grpc"
+	}
+
+	u, err := url.Parse(c.BaseURL + endpoint)
 	if err != nil {
 		return "", err
 	}

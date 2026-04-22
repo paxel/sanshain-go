@@ -24,10 +24,9 @@ Create a `sanshain.yaml` file in your project root:
 
 ```yaml
 sanshainUrl: https://sanshain.example.com
-clientName: my-go-service
-provide:
-  serviceName: my-go-service
-  openApiFile: api/openapi.yaml
+serviceName: my-go-service
+provides:
+  - file: api/openapi.yaml
 requires:
   - serviceName: auth-service
     outputDirectory: internal/api/auth
