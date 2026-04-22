@@ -134,8 +134,8 @@ func (c *SanshainClient) post(path string, payload interface{}, compression bool
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := c.readBody(resp)
-		return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, sanitize(body))
+		respBody, _ := c.readBody(resp)
+		return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, sanitize(respBody))
 	}
 
 	return nil
@@ -238,16 +238,16 @@ func (c *SanshainClient) RequireBundle(payload RequireBundlePayload, compression
 	}
 	defer resp.Body.Close()
 
-	body, err := c.readBody(resp)
+	respBody, err := c.readBody(resp)
 	if err != nil {
 		return "", err
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("request failed with status %d: %s", resp.StatusCode, sanitize(body))
+		return "", fmt.Errorf("request failed with status %d: %s", resp.StatusCode, sanitize(respBody))
 	}
 
-	return body, nil
+	return respBody, nil
 }
 
 func (c *SanshainClient) readBody(resp *http.Response) (string, error) {
