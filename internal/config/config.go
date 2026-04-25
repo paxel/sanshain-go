@@ -25,6 +25,7 @@ type ProvideConfig struct {
 	File         string `yaml:"file,omitempty"`
 	ApiType      string `yaml:"apiType,omitempty"`
 	Branch       string `yaml:"branch,omitempty"`
+	BaseVersion  *int   `yaml:"baseVersion,omitempty"`
 	OpenApiFile  string `yaml:"openApiFile,omitempty"`
 	AsyncApiFile string `yaml:"asyncApiFile,omitempty"`
 	ProtoFile    string `yaml:"protoFile,omitempty"`

@@ -22,6 +22,7 @@ type ProvidePayload struct {
 	OpenApiYaml string `json:"openapi_yaml"`
 	DryRun      bool   `json:"dry_run,omitempty"`
 	ApiType     string `json:"api_type,omitempty"`
+	BaseVersion *int   `json:"base_version,omitempty"`
 }
 
 type ProvideAsyncApiPayload struct {
@@ -30,6 +31,7 @@ type ProvideAsyncApiPayload struct {
 	AsyncApiYaml string `json:"asyncapi_yaml"`
 	DryRun       bool   `json:"dry_run,omitempty"`
 	ApiType      string `json:"api_type,omitempty"`
+	BaseVersion  *int   `json:"base_version,omitempty"`
 }
 
 type ProvideProtoPayload struct {
@@ -38,6 +40,25 @@ type ProvideProtoPayload struct {
 	ProtoContent string `json:"proto_content"`
 	DryRun       bool   `json:"dry_run,omitempty"`
 	ApiType      string `json:"api_type,omitempty"`
+	BaseVersion  *int   `json:"base_version,omitempty"`
+}
+
+type ProvideResponse struct {
+	Version     int            `json:"version"`
+	ContentHash string         `json:"content_hash"`
+	Changes     ProvideChanges `json:"changes"`
+}
+
+type ProvideChanges struct {
+	Inserts int `json:"inserts"`
+	Updates int `json:"updates"`
+	Deletes int `json:"deletes"`
+}
+
+type RequireResult struct {
+	Content     string
+	Etag        string
+	NotModified bool
 }
 
 type RequireBundleEndpoint struct {
@@ -76,32 +97,32 @@ func NewSanshainClient(baseURL, token string, insecure bool) *SanshainClient {
 	}
 }
 
-func (c *SanshainClient) Provide(payload ProvidePayload, compression bool) error {
+func (c *SanshainClient) Provide(payload ProvidePayload, compression bool) (*ProvideResponse, error) {
 	if payload.ApiType == "" {
 		payload.ApiType = "openapi"
 	}
-	return c.post("/provide", payload, compression)
+	return c.postProvide("/provide", payload, compression)
 }
 
-func (c *SanshainClient) ProvideAsyncApi(payload ProvideAsyncApiPayload, compression bool) error {
+func (c *SanshainClient) ProvideAsyncApi(payload ProvideAsyncApiPayload, compression bool) (*ProvideResponse, error) {
 	if payload.ApiType == "" {
 		payload.ApiType = "asyncapi"
 	}
-	return c.post("/provide/asyncapi", payload, compression)
+	return c.postProvide("/provide/asyncapi", payload, compression)
 }
 
-func (c *SanshainClient) ProvideProto(payload ProvideProtoPayload, compression bool) error {
+func (c *SanshainClient) ProvideProto(payload ProvideProtoPayload, compression bool) (*ProvideResponse, error) {
 	if payload.ApiType == "" {
 		payload.ApiType = "proto"
 	}
-	return c.post("/provide/grpc", payload, compression)
+	return c.postProvide("/provide/grpc", payload, compression)
 }
 
-func (c *SanshainClient) post(path string, payload interface{}, compression bool) error {
+func (c *SanshainClient) postProvide(path string, payload interface{}, compression bool) (*ProvideResponse, error) {
 	var body io.Reader
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	header := make(http.Header)
@@ -110,7 +131,7 @@ func (c *SanshainClient) post(path string, payload interface{}, compression bool
 	if compression {
 		compressed, err := utils.Compress(jsonData)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		body = bytes.NewReader(compressed)
 		header.Set("Content-Encoding", "gzip")
@@ -120,7 +141,7 @@ func (c *SanshainClient) post(path string, payload interface{}, compression bool
 
 	req, err := http.NewRequest("POST", c.BaseURL+path, body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header = header
 	if c.Token != "" {
@@ -129,19 +150,40 @@ func (c *SanshainClient) post(path string, payload interface{}, compression bool
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := c.readBody(resp)
-		return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, sanitize(respBody))
+	if resp.StatusCode == 409 {
+		return nil, fmt.Errorf("Concurrent modification detected. Server version has advanced beyond your base_version. Re-run to fetch the latest state.")
 	}
 
-	return nil
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := c.readBody(resp)
+		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, sanitize(respBody))
+	}
+
+	// Parse provide response
+	respBody, err := c.readBody(resp)
+	if err != nil {
+		return nil, nil
+	}
+	var provideResp ProvideResponse
+	if err := json.Unmarshal([]byte(respBody), &provideResp); err != nil {
+		return nil, nil
+	}
+	return &provideResp, nil
 }
 
 func (c *SanshainClient) Require(clientName, serviceName, branch, path, method string, timeout int, dryRun bool, apiType string) (string, error) {
+	result, err := c.RequireWithEtag(clientName, serviceName, branch, path, method, timeout, dryRun, apiType, "")
+	if err != nil {
+		return "", err
+	}
+	return result.Content, nil
+}
+
+func (c *SanshainClient) RequireWithEtag(clientName, serviceName, branch, reqPath, method string, timeout int, dryRun bool, apiType string, etag string) (*RequireResult, error) {
 	endpoint := "/require"
 	if apiType == "asyncapi" {
 		endpoint = "/require/asyncapi"
@@ -151,7 +193,7 @@ func (c *SanshainClient) Require(clientName, serviceName, branch, path, method s
 
 	u, err := url.Parse(c.BaseURL + endpoint)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	if apiType == "" {
@@ -162,7 +204,7 @@ func (c *SanshainClient) Require(clientName, serviceName, branch, path, method s
 	q.Set("clientname", clientName)
 	q.Set("servicename", serviceName)
 	q.Set("branch", branch)
-	q.Set("path", path)
+	q.Set("path", reqPath)
 	q.Set("method", method)
 	q.Set("api_type", apiType)
 	if timeout > 0 {
@@ -175,47 +217,67 @@ func (c *SanshainClient) Require(clientName, serviceName, branch, path, method s
 
 	req, err := http.NewRequest("GET", u.String(), nil)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
 	}
+	if etag != "" {
+		req.Header.Set("If-None-Match", etag)
+	}
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == 304 {
+		return &RequireResult{NotModified: true}, nil
+	}
+
 	body, err := c.readBody(resp)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("request failed with status %d: %s", resp.StatusCode, sanitize(body))
+		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, sanitize(body))
 	}
 
-	return body, nil
+	responseEtag := resp.Header.Get("ETag")
+	return &RequireResult{Content: body, Etag: responseEtag, NotModified: false}, nil
 }
 
 func (c *SanshainClient) RequireBundle(payload RequireBundlePayload, compression bool) (string, error) {
+	result, err := c.RequireBundleWithEtag(payload, compression, "")
+	if err != nil {
+		return "", err
+	}
+	return result.Content, nil
+}
+
+func (c *SanshainClient) RequireBundleWithEtag(payload RequireBundlePayload, compression bool, etag string) (*RequireResult, error) {
 	if payload.ApiType == "" {
 		payload.ApiType = "openapi"
 	}
 	var body io.Reader
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	header := make(http.Header)
 	header.Set("Content-Type", "application/json")
 
+	if etag != "" {
+		header.Set("If-None-Match", etag)
+	}
+
 	if compression {
 		compressed, err := utils.Compress(jsonData)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		body = bytes.NewReader(compressed)
 		header.Set("Content-Encoding", "gzip")
@@ -225,7 +287,7 @@ func (c *SanshainClient) RequireBundle(payload RequireBundlePayload, compression
 
 	req, err := http.NewRequest("POST", c.BaseURL+"/require-bundle", body)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	req.Header = header
 	if c.Token != "" {
@@ -234,20 +296,25 @@ func (c *SanshainClient) RequireBundle(payload RequireBundlePayload, compression
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == 304 {
+		return &RequireResult{NotModified: true}, nil
+	}
+
 	respBody, err := c.readBody(resp)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("request failed with status %d: %s", resp.StatusCode, sanitize(respBody))
+		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, sanitize(respBody))
 	}
 
-	return respBody, nil
+	responseEtag := resp.Header.Get("ETag")
+	return &RequireResult{Content: respBody, Etag: responseEtag, NotModified: false}, nil
 }
 
 func (c *SanshainClient) readBody(resp *http.Response) (string, error) {

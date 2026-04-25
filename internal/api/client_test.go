@@ -14,7 +14,9 @@ func TestSanshainClient_Provide(t *testing.T) {
 		if r.Method != "POST" {
 			t.Errorf("expected POST, got %s", r.Method)
 		}
-		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		w.Write([]byte(`{"version":1,"content_hash":"sha256:abc","changes":{"inserts":1,"updates":0,"deletes":0}}`))
 	}))
 	defer ts.Close()
 
@@ -24,9 +26,14 @@ func TestSanshainClient_Provide(t *testing.T) {
 		Branch:      "main",
 		OpenApiYaml: "test",
 	}
-	err := client.Provide(payload, false)
+	resp, err := client.Provide(payload, false)
 	if err != nil {
 		t.Errorf("Provide failed: %v", err)
+	}
+	if resp == nil {
+		t.Error("expected non-nil response")
+	} else if resp.Version != 1 {
+		t.Errorf("expected version 1, got %d", resp.Version)
 	}
 }
 
