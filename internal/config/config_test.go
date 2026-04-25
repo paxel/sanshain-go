@@ -58,10 +58,10 @@ func TestValidateConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("Missing serviceName", func(t *testing.T) {
+	t.Run("Missing serviceName is allowed", func(t *testing.T) {
 		cfg := &SanshainConfig{SanshainURL: "http://test"}
-		if err := validateConfig(cfg); err == nil {
-			t.Error("expected error for missing serviceName")
+		if err := validateConfig(cfg); err != nil {
+			t.Errorf("serviceName should be optional, got error: %v", err)
 		}
 	})
 }
