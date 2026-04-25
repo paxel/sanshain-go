@@ -65,6 +65,14 @@ func usage() {
 }
 
 func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, sc *cache.SanshainCache) error {
+	if cfg.ServiceName == "" {
+		if cfg.Strict {
+			return fmt.Errorf("serviceName is required (in sanshain.yaml or via environment)")
+		}
+		fmt.Println("\u26a0 No serviceName configured. Skipping provide. Set strict: true to fail in this case.")
+		return nil
+	}
+
 	var provides []config.ProvideConfig
 	if cfg.Provide != nil {
 		provides = append(provides, *cfg.Provide)
@@ -72,7 +80,11 @@ func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 	provides = append(provides, cfg.Provides...)
 
 	if len(provides) == 0 {
-		return fmt.Errorf("no provide configuration found in sanshain.yaml")
+		if cfg.Strict {
+			return fmt.Errorf("no provide configuration found in sanshain.yaml")
+		}
+		fmt.Println("\u26a0 No provide configuration found in sanshain.yaml. Skipping. Set strict: true to fail in this case.")
+		return nil
 	}
 
 	defaultBranch := git.GetCurrentBranch()
@@ -121,7 +133,10 @@ func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 	}
 
 	if !provided {
-		fmt.Println("No specification files found to provide.")
+		if cfg.Strict {
+			return fmt.Errorf("no specification files found to provide")
+		}
+		fmt.Println("\u26a0 No specification files found to provide. Skipping. Set strict: true to fail in this case.")
 	} else {
 		fmt.Println("Successfully provided spec(s).")
 	}
@@ -204,8 +219,19 @@ func provideFile(client *api.SanshainClient, serviceName, branch, filePath, apiT
 }
 
 func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *cache.SanshainCache) error {
+	if cfg.ServiceName == "" {
+		if cfg.Strict {
+			return fmt.Errorf("serviceName is required (in sanshain.yaml or via environment)")
+		}
+		fmt.Println("\u26a0 No serviceName configured. Skipping require. Set strict: true to fail in this case.")
+		return nil
+	}
+
 	if len(cfg.Requires) == 0 {
-		fmt.Println("No requirements defined in sanshain.yaml")
+		if cfg.Strict {
+			return fmt.Errorf("no requires configured in sanshain.yaml")
+		}
+		fmt.Println("\u26a0 No requires configured in sanshain.yaml. Skipping. Set strict: true to fail in this case.")
 		return nil
 	}
 

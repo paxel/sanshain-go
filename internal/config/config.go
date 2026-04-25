@@ -38,6 +38,7 @@ type SanshainConfig struct {
 	Timeout     int             `yaml:"timeout,omitempty"`
 	Compression bool            `yaml:"compression,omitempty"`
 	BestEffort  bool            `yaml:"bestEffort,omitempty"`
+	Strict      bool            `yaml:"strict,omitempty"`
 	Provide     *ProvideConfig  `yaml:"provide,omitempty"`
 	Provides    []ProvideConfig `yaml:"provides,omitempty"`
 	Requires    []RequireConfig `yaml:"requires,omitempty"`
@@ -67,9 +68,6 @@ func validateConfig(config *SanshainConfig) error {
 	}
 	if config.ServiceName == "" && config.ClientName != "" {
 		config.ServiceName = config.ClientName
-	}
-	if config.ServiceName == "" {
-		return fmt.Errorf("missing required field: serviceName")
 	}
 
 	validateProvide := func(p *ProvideConfig, i int) error {
