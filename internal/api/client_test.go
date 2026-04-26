@@ -16,7 +16,7 @@ func TestSanshainClient_Provide(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
-		w.Write([]byte(`{"version":1,"content_hash":"sha256:abc","changes":{"inserts":1,"updates":0,"deletes":0}}`))
+		_, _ = w.Write([]byte(`{"version":1,"content_hash":"sha256:abc","changes":{"inserts":1,"updates":0,"deletes":0}}`))
 	}))
 	defer ts.Close()
 
@@ -45,7 +45,7 @@ func TestSanshainClient_Require(t *testing.T) {
 		if r.URL.Query().Get("clientname") != "client" {
 			t.Errorf("expected client, got %s", r.URL.Query().Get("clientname"))
 		}
-		w.Write([]byte("openapi-content"))
+		_, _ = w.Write([]byte("openapi-content"))
 	}))
 	defer ts.Close()
 
@@ -64,7 +64,7 @@ func TestSanshainClient_RequireBundle(t *testing.T) {
 		if r.URL.Path != "/require-bundle" {
 			t.Errorf("expected /require-bundle, got %s", r.URL.Path)
 		}
-		w.Write([]byte("bundle-content"))
+		_, _ = w.Write([]byte("bundle-content"))
 	}))
 	defer ts.Close()
 

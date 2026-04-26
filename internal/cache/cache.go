@@ -60,14 +60,14 @@ func (c *SanshainCache) load() {
 
 func (c *SanshainCache) Save() error {
 	dir := filepath.Dir(c.cacheFile)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0750); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(c.State, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(c.cacheFile, data, 0644)
+	return os.WriteFile(c.cacheFile, data, 0600)
 }
 
 func (c *SanshainCache) GetProvideEntry(key string) *ProvideEntry {

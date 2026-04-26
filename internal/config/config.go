@@ -45,6 +45,7 @@ type SanshainConfig struct {
 }
 
 func LoadConfig(configPath string) (*SanshainConfig, error) {
+	/* #nosec G304 */
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)

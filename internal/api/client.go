@@ -86,6 +86,7 @@ func NewSanshainClient(baseURL, token string, insecure bool) *SanshainClient {
 	httpClient := &http.Client{}
 	if insecure {
 		httpClient.Transport = &http.Transport{
+			/* #nosec G402 */
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		}
 	}

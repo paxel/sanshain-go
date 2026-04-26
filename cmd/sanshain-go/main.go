@@ -144,6 +144,7 @@ func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 }
 
 func provideFile(client *api.SanshainClient, serviceName, branch, filePath, apiType string, compression bool, baseVersion *int, sc *cache.SanshainCache) error {
+	/* #nosec G304 */
 	specData, err := os.ReadFile(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to read specification file %s: %w", filePath, err)
@@ -273,12 +274,13 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 			}
 			fileName = req.ServiceName + "." + ext
 
-			err = os.MkdirAll(req.OutputDirectory, 0755)
+			err = os.MkdirAll(req.OutputDirectory, 0750)
 			if err != nil {
 				return fmt.Errorf("failed to create output directory %s: %w", req.OutputDirectory, err)
 			}
-			outputPath := filepath.Join(req.OutputDirectory, fileName)
-			err = os.WriteFile(outputPath, []byte(result.Content), 0644)
+			outputPath := filepath.Join(req.OutputDirectory, filepath.Clean(fileName))
+			/* #nosec G306 G703 */
+			err = os.WriteFile(outputPath, []byte(result.Content), 0600)
 			if err != nil {
 				return fmt.Errorf("failed to write output file %s: %w", outputPath, err)
 			}
@@ -325,12 +327,13 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 			}
 			fileName = req.ServiceName + "_bundle." + ext
 
-			err = os.MkdirAll(req.OutputDirectory, 0755)
+			err = os.MkdirAll(req.OutputDirectory, 0750)
 			if err != nil {
 				return fmt.Errorf("failed to create output directory %s: %w", req.OutputDirectory, err)
 			}
-			outputPath := filepath.Join(req.OutputDirectory, fileName)
-			err = os.WriteFile(outputPath, []byte(result.Content), 0644)
+			outputPath := filepath.Join(req.OutputDirectory, filepath.Clean(fileName))
+			/* #nosec G306 G703 */
+			err = os.WriteFile(outputPath, []byte(result.Content), 0600)
 			if err != nil {
 				return fmt.Errorf("failed to write output file %s: %w", outputPath, err)
 			}
