@@ -89,7 +89,8 @@ func validateConfig(config *SanshainConfig) error {
 		}
 	}
 
-	for i, req := range config.Requires {
+	for i := range config.Requires {
+		req := &config.Requires[i]
 		if req.ServiceName == "" {
 			return fmt.Errorf("missing serviceName in requires[%d]", i)
 		}
@@ -99,7 +100,8 @@ func validateConfig(config *SanshainConfig) error {
 		if len(req.Endpoints) == 0 {
 			return fmt.Errorf("missing or empty endpoints in requires[%d]", i)
 		}
-		for j, endpoint := range req.Endpoints {
+		for j := range req.Endpoints {
+			endpoint := &req.Endpoints[j]
 			if endpoint.Method == "" {
 				return fmt.Errorf("missing method in requires[%d].endpoints[%d]", i, j)
 			}

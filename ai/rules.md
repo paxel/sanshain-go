@@ -23,7 +23,17 @@ After any code modification, the following checks MUST be executed locally. A ta
 
 - **KISS (Keep It Simple, Stupid)**: Avoid over-engineering. Prefer straightforward, readable code over complex abstractions.
 - **Single Responsibility**: Each package and function should have one clear purpose.
-- **Go Idioms**: Follow modern Go idioms (Go 1.23+). Use `any` instead of `interface{}`, `errors.Is`/`errors.As` for error handling, and standard library features where possible.
+- **Go Idioms**: Follow modern Go idioms (Go 1.23+).
+    - Use `any` instead of `interface{}`.
+    - Use `errors.Is`/`errors.As` for error handling.
+    - Use `slices.Contains`, `maps.Keys`, etc., from the standard library.
+    - Use `for i := range n` for simple loops.
+- **DRY (Don't Repeat Yourself)**: Avoid code repetition. 
+    - Use helper methods (e.g., generic `post` method for HTTP requests) to centralize common logic like JSON serialization, compression, and header management.
+    - Unify repetitive logic for different API types or similar command-line operations.
+- **Efficient Patterns**:
+    - Use slices and loops to check multiple environment variables or configurations instead of long `if-else` chains.
+    - Group similar data/logic into structs or maps to reduce boilerplate.
 - **Small Functions**: Break down large functions into smaller, testable units.
 - **Documentation**: Maintain clear and concise documentation in code and Markdown files.
 

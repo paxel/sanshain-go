@@ -38,48 +38,31 @@ func GetCurrentBranch() string {
 }
 
 func detectBranchFromCI() string {
-	// GitHub Actions
-	if b := os.Getenv("GITHUB_HEAD_REF"); b != "" {
-		return b
-	}
-	if b := os.Getenv("GITHUB_REF_NAME"); b != "" {
-		return b
-	}
-
-	// GitLab CI
-	if b := os.Getenv("CI_COMMIT_BRANCH"); b != "" {
-		return b
-	}
-	if b := os.Getenv("CI_MERGE_REQUEST_SOURCE_BRANCH_NAME"); b != "" {
-		return b
+	ciEnvs := []string{
+		"GITHUB_HEAD_REF",
+		"GITHUB_REF_NAME",
+		"CI_COMMIT_BRANCH",
+		"CI_MERGE_REQUEST_SOURCE_BRANCH_NAME",
+		"BITBUCKET_BRANCH",
+		"TRAVIS_BRANCH",
+		"CIRCLE_BRANCH",
 	}
 
-	// Jenkins
+	for _, env := range ciEnvs {
+		if b := os.Getenv(env); b != "" {
+			return b
+		}
+	}
+
+	// Special handling for some CIs
 	if b := os.Getenv("GIT_BRANCH"); b != "" {
 		return strings.TrimPrefix(b, "origin/")
 	}
 	if b := os.Getenv("BRANCH_NAME"); b != "" {
 		return b
 	}
-
-	// Bitbucket Pipelines
-	if b := os.Getenv("BITBUCKET_BRANCH"); b != "" {
-		return b
-	}
-
-	// Azure DevOps
 	if b := os.Getenv("BUILD_SOURCEBRANCH"); b != "" {
 		return strings.TrimPrefix(b, "refs/heads/")
-	}
-
-	// Travis CI
-	if b := os.Getenv("TRAVIS_BRANCH"); b != "" {
-		return b
-	}
-
-	// CircleCI
-	if b := os.Getenv("CIRCLE_BRANCH"); b != "" {
-		return b
 	}
 
 	return ""

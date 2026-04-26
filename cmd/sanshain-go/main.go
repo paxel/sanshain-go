@@ -73,11 +73,10 @@ func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 		return nil
 	}
 
-	var provides []config.ProvideConfig
+	provides := cfg.Provides
 	if cfg.Provide != nil {
-		provides = append(provides, *cfg.Provide)
+		provides = append([]config.ProvideConfig{*cfg.Provide}, provides...)
 	}
-	provides = append(provides, cfg.Provides...)
 
 	if len(provides) == 0 {
 		if cfg.Strict {
@@ -100,32 +99,27 @@ func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 			branch = defaultBranch
 		}
 
-		if p.File != "" {
-			err := provideFile(client, cfg.ServiceName, branch, p.File, p.ApiType, cfg.Compression, p.BaseVersion, sc)
-			if err != nil {
-				return err
-			}
-			provided = true
+		type fileInfo struct {
+			path    string
+			apiType string
 		}
-
+		var files []fileInfo
+		if p.File != "" {
+			files = append(files, fileInfo{p.File, p.ApiType})
+		}
 		// Backward compatibility
 		if p.OpenApiFile != "" {
-			err := provideFile(client, cfg.ServiceName, branch, p.OpenApiFile, "openapi", cfg.Compression, p.BaseVersion, sc)
-			if err != nil {
-				return err
-			}
-			provided = true
+			files = append(files, fileInfo{p.OpenApiFile, "openapi"})
 		}
 		if p.AsyncApiFile != "" {
-			err := provideFile(client, cfg.ServiceName, branch, p.AsyncApiFile, "asyncapi", cfg.Compression, p.BaseVersion, sc)
-			if err != nil {
-				return err
-			}
-			provided = true
+			files = append(files, fileInfo{p.AsyncApiFile, "asyncapi"})
 		}
 		if p.ProtoFile != "" {
-			err := provideFile(client, cfg.ServiceName, branch, p.ProtoFile, "proto", cfg.Compression, p.BaseVersion, sc)
-			if err != nil {
+			files = append(files, fileInfo{p.ProtoFile, "proto"})
+		}
+
+		for _, f := range files {
+			if err := provideFile(client, cfg.ServiceName, branch, f.path, f.apiType, cfg.Compression, p.BaseVersion, sc); err != nil {
 				return err
 			}
 			provided = true
@@ -246,52 +240,29 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 
 		fmt.Printf("Requiring %s (branch: %s) from %s...\n", req.ServiceName, reqBranch, cfg.SanshainURL)
 
+		var result *api.RequireResult
+		var cacheKey string
 		var fileName string
-		var err error
 
 		if len(req.Endpoints) == 1 {
 			endpoint := req.Endpoints[0]
-			cacheKey := cache.RequireKey(req.ServiceName, reqBranch, endpoint.Method, endpoint.Path)
+			cacheKey = cache.RequireKey(req.ServiceName, reqBranch, endpoint.Method, endpoint.Path)
 			cachedEntry := sc.GetRequireEntry(cacheKey)
 			cachedEtag := ""
 			if cachedEntry != nil {
 				cachedEtag = cachedEntry.Etag
 			}
 
-			result, reqErr := client.RequireWithEtag(cfg.ServiceName, req.ServiceName, reqBranch, endpoint.Path, endpoint.Method, req.Timeout, false, req.ApiType, cachedEtag)
+			var reqErr error
+			result, reqErr = client.RequireWithEtag(cfg.ServiceName, req.ServiceName, reqBranch, endpoint.Path, endpoint.Method, req.Timeout, false, req.ApiType, cachedEtag)
 			if reqErr != nil {
 				return fmt.Errorf("failed to require %s: %w", req.ServiceName, reqErr)
 			}
 
-			if result.NotModified {
-				fmt.Printf("\u23ed %s spec unchanged (304), skipping code generation.\n", req.ServiceName)
-				continue
-			}
-
-			ext := "yaml"
-			if req.ApiType == "proto" {
-				ext = "proto"
-			}
+			ext := getExtension(req.ApiType)
 			fileName = req.ServiceName + "." + ext
-
-			err = os.MkdirAll(req.OutputDirectory, 0750)
-			if err != nil {
-				return fmt.Errorf("failed to create output directory %s: %w", req.OutputDirectory, err)
-			}
-			outputPath := filepath.Join(req.OutputDirectory, filepath.Clean(fileName))
-			/* #nosec G306 G703 */
-			err = os.WriteFile(outputPath, []byte(result.Content), 0600)
-			if err != nil {
-				return fmt.Errorf("failed to write output file %s: %w", outputPath, err)
-			}
-			fmt.Printf("Saved %s to %s\n", fileName, req.OutputDirectory)
-
-			if result.Etag != "" {
-				sc.UpdateRequireEntry(cacheKey, result.Etag)
-				_ = sc.Save()
-			}
 		} else {
-			cacheKey := cache.RequireBundleKey(req.ServiceName, reqBranch)
+			cacheKey = cache.RequireBundleKey(req.ServiceName, reqBranch)
 			cachedEntry := sc.GetRequireEntry(cacheKey)
 			cachedEtag := ""
 			if cachedEntry != nil {
@@ -311,40 +282,44 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 					Method: e.Method,
 				})
 			}
-			result, reqErr := client.RequireBundleWithEtag(payload, cfg.Compression, cachedEtag)
+			var reqErr error
+			result, reqErr = client.RequireBundleWithEtag(payload, cfg.Compression, cachedEtag)
 			if reqErr != nil {
 				return fmt.Errorf("failed to require %s: %w", req.ServiceName, reqErr)
 			}
 
-			if result.NotModified {
-				fmt.Printf("\u23ed %s spec unchanged (304), skipping code generation.\n", req.ServiceName)
-				continue
-			}
-
-			ext := "yaml"
-			if req.ApiType == "proto" {
-				ext = "proto"
-			}
+			ext := getExtension(req.ApiType)
 			fileName = req.ServiceName + "_bundle." + ext
+		}
 
-			err = os.MkdirAll(req.OutputDirectory, 0750)
-			if err != nil {
-				return fmt.Errorf("failed to create output directory %s: %w", req.OutputDirectory, err)
-			}
-			outputPath := filepath.Join(req.OutputDirectory, filepath.Clean(fileName))
-			/* #nosec G306 G703 */
-			err = os.WriteFile(outputPath, []byte(result.Content), 0600)
-			if err != nil {
-				return fmt.Errorf("failed to write output file %s: %w", outputPath, err)
-			}
-			fmt.Printf("Saved %s to %s\n", fileName, req.OutputDirectory)
+		if result.NotModified {
+			fmt.Printf("\u23ed %s spec unchanged (304), skipping code generation.\n", req.ServiceName)
+			continue
+		}
 
-			if result.Etag != "" {
-				sc.UpdateRequireEntry(cacheKey, result.Etag)
-				_ = sc.Save()
-			}
+		if err := os.MkdirAll(req.OutputDirectory, 0750); err != nil {
+			return fmt.Errorf("failed to create output directory %s: %w", req.OutputDirectory, err)
+		}
+
+		outputPath := filepath.Join(req.OutputDirectory, filepath.Clean(fileName))
+		/* #nosec G306 G703 */
+		if err := os.WriteFile(outputPath, []byte(result.Content), 0600); err != nil {
+			return fmt.Errorf("failed to write output file %s: %w", outputPath, err)
+		}
+		fmt.Printf("Saved %s to %s\n", fileName, req.OutputDirectory)
+
+		if result.Etag != "" {
+			sc.UpdateRequireEntry(cacheKey, result.Etag)
+			_ = sc.Save()
 		}
 	}
 
 	return nil
+}
+
+func getExtension(apiType string) string {
+	if apiType == "proto" {
+		return "proto"
+	}
+	return "yaml"
 }
