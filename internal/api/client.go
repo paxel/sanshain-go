@@ -22,6 +22,7 @@ type ProvidePayload struct {
 	Branch      string `json:"branch"`
 	OpenApiYaml string `json:"openapi_yaml"`
 	DryRun      bool   `json:"dry_run,omitempty"`
+	Force       bool   `json:"force,omitempty"`
 	ApiType     string `json:"api_type,omitempty"`
 	BaseVersion *int   `json:"base_version,omitempty"`
 }
@@ -31,6 +32,7 @@ type ProvideAsyncApiPayload struct {
 	Branch       string `json:"branch"`
 	AsyncApiYaml string `json:"asyncapi_yaml"`
 	DryRun       bool   `json:"dry_run,omitempty"`
+	Force        bool   `json:"force,omitempty"`
 	ApiType      string `json:"api_type,omitempty"`
 	BaseVersion  *int   `json:"base_version,omitempty"`
 }
@@ -40,6 +42,7 @@ type ProvideProtoPayload struct {
 	Branch       string `json:"branch"`
 	ProtoContent string `json:"proto_content"`
 	DryRun       bool   `json:"dry_run,omitempty"`
+	Force        bool   `json:"force,omitempty"`
 	ApiType      string `json:"api_type,omitempty"`
 	BaseVersion  *int   `json:"base_version,omitempty"`
 }

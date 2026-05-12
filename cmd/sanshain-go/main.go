@@ -15,6 +15,8 @@ import (
 func main() {
 	configPath := flag.String("config", "sanshain.yaml", "path to sanshain.yaml")
 	insecure := flag.Bool("insecure", false, "skip SSL certificate verification")
+	force := flag.Bool("force", false, "force upload (reset shared contract source)")
+	bestEffort := flag.Bool("best-effort", false, "continue on errors")
 	flag.Parse()
 
 	if flag.NArg() < 1 {
@@ -26,9 +28,26 @@ func main() {
 
 	cfg, err := config.LoadConfig(*configPath)
 	if err != nil {
-		fmt.Printf("Error loading config: %v\n", err)
-		os.Exit(1)
+		// Even if config fails to load, check best effort from flags/env
+		resolvedBestEffort := *bestEffort || os.Getenv("SANSHAIN_BEST_EFFORT") == "true"
+		if resolvedBestEffort {
+			fmt.Printf("Warning loading config: %v\n", err)
+			cfg = &config.SanshainConfig{} // dummy config
+		} else {
+			fmt.Printf("Error loading config: %v\n", err)
+			os.Exit(1)
+		}
 	}
+
+	// Resolve best effort
+	if *bestEffort {
+		cfg.BestEffort = true
+	} else if env := os.Getenv("SANSHAIN_BEST_EFFORT"); env != "" {
+		cfg.BestEffort = env == "true"
+	}
+
+	// Resolve force
+	resolvedForce := *force || os.Getenv("SANSHAIN_FORCE") == "true"
 
 	token := os.Getenv("SANSHAIN_TOKEN")
 	client := api.NewSanshainClient(cfg.SanshainURL, token, *insecure)
@@ -36,7 +55,7 @@ func main() {
 
 	switch command {
 	case "provide":
-		err = handleProvide(client, cfg, sc)
+		err = handleProvide(client, cfg, sc, resolvedForce)
 	case "require":
 		err = handleRequire(client, cfg, sc)
 	default:
@@ -64,7 +83,7 @@ func usage() {
 	flag.PrintDefaults()
 }
 
-func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, sc *cache.SanshainCache) error {
+func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, sc *cache.SanshainCache, force bool) error {
 	if cfg.ServiceName == "" {
 		if cfg.Strict {
 			return fmt.Errorf("serviceName is required (in sanshain.yaml or via environment)")
@@ -119,7 +138,7 @@ func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 		}
 
 		for _, f := range files {
-			if err := provideFile(client, cfg.ServiceName, branch, f.path, f.apiType, cfg.Compression, p.BaseVersion, sc); err != nil {
+			if err := provideFile(client, cfg.ServiceName, branch, f.path, f.apiType, cfg.Compression, p.BaseVersion, sc, force); err != nil {
 				return err
 			}
 			provided = true
@@ -137,7 +156,7 @@ func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 	return nil
 }
 
-func provideFile(client *api.SanshainClient, serviceName, branch, filePath, apiType string, compression bool, baseVersion *int, sc *cache.SanshainCache) error {
+func provideFile(client *api.SanshainClient, serviceName, branch, filePath, apiType string, compression bool, baseVersion *int, sc *cache.SanshainCache, force bool) error {
 	/* #nosec G304 */
 	specData, err := os.ReadFile(filePath)
 	if err != nil {
@@ -146,17 +165,17 @@ func provideFile(client *api.SanshainClient, serviceName, branch, filePath, apiT
 	content := string(specData)
 	fileKey := filepath.Base(filePath)
 
-	// Feature 3: Client-side content caching — skip if unchanged
+	// Feature 3: Client-side content caching — skip if unchanged (unless force)
 	contentHash := cache.ComputeHash(content)
 	cachedEntry := sc.GetProvideEntry(fileKey)
-	if cachedEntry != nil && contentHash == cachedEntry.ContentHash {
+	if !force && cachedEntry != nil && contentHash == cachedEntry.ContentHash {
 		fmt.Println("\u23ed Spec unchanged (hash match), skipping provide.")
 		return nil
 	}
 
 	// Feature 1: Use cached version as base_version if not explicitly set
 	effectiveBaseVersion := baseVersion
-	if effectiveBaseVersion == nil && cachedEntry != nil && cachedEntry.Version > 0 {
+	if !force && effectiveBaseVersion == nil && cachedEntry != nil && cachedEntry.Version > 0 {
 		v := cachedEntry.Version
 		effectiveBaseVersion = &v
 	}
@@ -169,8 +188,9 @@ func provideFile(client *api.SanshainClient, serviceName, branch, filePath, apiT
 			Branch:      branch,
 			OpenApiYaml: content,
 			BaseVersion: effectiveBaseVersion,
+			Force:       force,
 		}
-		fmt.Printf("Providing OpenAPI %s (branch: %s) to %s...\n", payload.ServiceName, payload.Branch, client.BaseURL)
+		fmt.Printf("Providing OpenAPI %s (branch: %s, force: %v) to %s...\n", payload.ServiceName, payload.Branch, payload.Force, client.BaseURL)
 		resp, err = client.Provide(payload, compression)
 	} else if apiType == "asyncapi" {
 		payload := api.ProvideAsyncApiPayload{
@@ -178,8 +198,9 @@ func provideFile(client *api.SanshainClient, serviceName, branch, filePath, apiT
 			Branch:       branch,
 			AsyncApiYaml: content,
 			BaseVersion:  effectiveBaseVersion,
+			Force:        force,
 		}
-		fmt.Printf("Providing AsyncAPI %s (branch: %s) to %s...\n", payload.ServiceName, payload.Branch, client.BaseURL)
+		fmt.Printf("Providing AsyncAPI %s (branch: %s, force: %v) to %s...\n", payload.ServiceName, payload.Branch, payload.Force, client.BaseURL)
 		resp, err = client.ProvideAsyncApi(payload, compression)
 	} else if apiType == "proto" || apiType == "grpc" {
 		payload := api.ProvideProtoPayload{
@@ -187,8 +208,9 @@ func provideFile(client *api.SanshainClient, serviceName, branch, filePath, apiT
 			Branch:       branch,
 			ProtoContent: content,
 			BaseVersion:  effectiveBaseVersion,
+			Force:        force,
 		}
-		fmt.Printf("Providing Proto %s (branch: %s) to %s...\n", payload.ServiceName, payload.Branch, client.BaseURL)
+		fmt.Printf("Providing Proto %s (branch: %s, force: %v) to %s...\n", payload.ServiceName, payload.Branch, payload.Force, client.BaseURL)
 		resp, err = client.ProvideProto(payload, compression)
 	} else {
 		return fmt.Errorf("unsupported apiType: %s", apiType)
