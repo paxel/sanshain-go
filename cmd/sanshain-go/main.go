@@ -1,23 +1,33 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 
-	"github.com/paxel/sanshain/sanshain-go/internal/api"
-	"github.com/paxel/sanshain/sanshain-go/internal/cache"
-	"github.com/paxel/sanshain/sanshain-go/internal/config"
-	"github.com/paxel/sanshain/sanshain-go/internal/git"
+	"github.com/paxel/sanshain/sanshain-go/v2/internal/api"
+	"github.com/paxel/sanshain/sanshain-go/v2/internal/cache"
+	"github.com/paxel/sanshain/sanshain-go/v2/internal/config"
 )
+
+// version is the client's own version. sanshain-go 2.x speaks the
+// Sanshain Service 2.x wire contract.
+const version = "2.0.0"
 
 func main() {
 	configPath := flag.String("config", "sanshain.yaml", "path to sanshain.yaml")
 	insecure := flag.Bool("insecure", false, "skip SSL certificate verification")
-	force := flag.Bool("force", false, "force upload (reset shared contract source)")
 	bestEffort := flag.Bool("best-effort", false, "continue on errors")
+	ga := flag.Bool("ga", false, "provide as immutable 'ga' instead of the default 'snapshot' (also: SANSHAIN_GA=true)")
+	showVersion := flag.Bool("version", false, "print the client version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("sanshain-go %s\n", version)
+		return
+	}
 
 	if flag.NArg() < 1 {
 		usage()
@@ -46,16 +56,13 @@ func main() {
 		cfg.BestEffort = env == "true"
 	}
 
-	// Resolve force
-	resolvedForce := *force || os.Getenv("SANSHAIN_FORCE") == "true"
-
 	token := os.Getenv("SANSHAIN_TOKEN")
 	client := api.NewSanshainClient(cfg.SanshainURL, token, *insecure)
 	sc := cache.NewSanshainCache(".")
 
 	switch command {
 	case "provide":
-		err = handleProvide(client, cfg, sc, resolvedForce)
+		err = handleProvide(client, cfg, resolveStability(*ga))
 	case "require":
 		err = handleRequire(client, cfg, sc)
 	default:
@@ -74,21 +81,30 @@ func main() {
 	}
 }
 
+// resolveStability implements the ga switch: every provide is a snapshot
+// unless the --ga flag or SANSHAIN_GA=true explicitly says otherwise.
+func resolveStability(gaFlag bool) string {
+	if gaFlag || os.Getenv("SANSHAIN_GA") == "true" {
+		return "ga"
+	}
+	return "snapshot"
+}
+
 func usage() {
 	fmt.Println("Usage: sanshain-go [flags] <command>")
 	fmt.Println("Commands:")
-	fmt.Println("  provide   Upload local OpenAPI spec to Sanshain")
-	fmt.Println("  require   Download required specs from Sanshain")
+	fmt.Println("  provide   Upload local API spec(s) to Sanshain (version read from the spec file)")
+	fmt.Println("  require   Download version-pinned specs from Sanshain")
 	fmt.Println("Flags:")
 	flag.PrintDefaults()
 }
 
-func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, sc *cache.SanshainCache, force bool) error {
+func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, stability string) error {
 	if cfg.ServiceName == "" {
 		if cfg.Strict {
 			return fmt.Errorf("serviceName is required (in sanshain.yaml or via environment)")
 		}
-		fmt.Println("\u26a0 No serviceName configured. Skipping provide. Set strict: true to fail in this case.")
+		fmt.Println("⚠ No serviceName configured. Skipping provide. Set strict: true to fail in this case.")
 		return nil
 	}
 
@@ -101,23 +117,13 @@ func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 		if cfg.Strict {
 			return fmt.Errorf("no provide configuration found in sanshain.yaml")
 		}
-		fmt.Println("\u26a0 No provide configuration found in sanshain.yaml. Skipping. Set strict: true to fail in this case.")
+		fmt.Println("⚠ No provide configuration found in sanshain.yaml. Skipping. Set strict: true to fail in this case.")
 		return nil
-	}
-
-	defaultBranch := git.GetCurrentBranch()
-	if defaultBranch == "" {
-		defaultBranch = "main"
 	}
 
 	provided := false
 
 	for _, p := range provides {
-		branch := p.Branch
-		if branch == "" {
-			branch = defaultBranch
-		}
-
 		type fileInfo struct {
 			path    string
 			apiType string
@@ -138,7 +144,7 @@ func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 		}
 
 		for _, f := range files {
-			if err := provideFile(client, cfg.ServiceName, branch, f.path, f.apiType, cfg.Compression, p.BaseVersion, sc, force); err != nil {
+			if err := provideFile(client, cfg.ServiceName, f.path, f.apiType, stability, cfg.Compression); err != nil {
 				return err
 			}
 			provided = true
@@ -149,87 +155,68 @@ func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 		if cfg.Strict {
 			return fmt.Errorf("no specification files found to provide")
 		}
-		fmt.Println("\u26a0 No specification files found to provide. Skipping. Set strict: true to fail in this case.")
+		fmt.Println("⚠ No specification files found to provide. Skipping. Set strict: true to fail in this case.")
 	} else {
 		fmt.Println("Successfully provided spec(s).")
 	}
 	return nil
 }
 
-func provideFile(client *api.SanshainClient, serviceName, branch, filePath, apiType string, compression bool, baseVersion *int, sc *cache.SanshainCache, force bool) error {
+func provideFile(client *api.SanshainClient, producerName, filePath, apiType, stability string, compression bool) error {
 	/* #nosec G304 */
 	specData, err := os.ReadFile(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to read specification file %s: %w", filePath, err)
 	}
 	content := string(specData)
-	fileKey := filepath.Base(filePath)
-
-	// Feature 3: Client-side content caching — skip if unchanged (unless force)
-	contentHash := cache.ComputeHash(content)
-	cachedEntry := sc.GetProvideEntry(fileKey)
-	if !force && cachedEntry != nil && contentHash == cachedEntry.ContentHash {
-		fmt.Println("\u23ed Spec unchanged (hash match), skipping provide.")
-		return nil
-	}
-
-	// Feature 1: Use cached version as base_version if not explicitly set
-	effectiveBaseVersion := baseVersion
-	if !force && effectiveBaseVersion == nil && cachedEntry != nil && cachedEntry.Version > 0 {
-		v := cachedEntry.Version
-		effectiveBaseVersion = &v
-	}
 
 	var resp *api.ProvideResponse
 
 	if apiType == "" || apiType == "openapi" {
 		payload := api.ProvidePayload{
-			ServiceName: serviceName,
-			Branch:      branch,
-			OpenApiYaml: content,
-			BaseVersion: effectiveBaseVersion,
-			Force:       force,
+			ProducerName: producerName,
+			OpenApiYaml:  content,
+			Stability:    stability,
 		}
-		fmt.Printf("Providing OpenAPI %s (branch: %s, force: %v) to %s...\n", payload.ServiceName, payload.Branch, payload.Force, client.BaseURL)
+		fmt.Printf("Providing OpenAPI %s (stability: %s) to %s...\n", producerName, stability, client.BaseURL)
 		resp, err = client.Provide(payload, compression)
 	} else if apiType == "asyncapi" {
 		payload := api.ProvideAsyncApiPayload{
-			ServiceName:  serviceName,
-			Branch:       branch,
+			ProducerName: producerName,
 			AsyncApiYaml: content,
-			BaseVersion:  effectiveBaseVersion,
-			Force:        force,
+			Stability:    stability,
 		}
-		fmt.Printf("Providing AsyncAPI %s (branch: %s, force: %v) to %s...\n", payload.ServiceName, payload.Branch, payload.Force, client.BaseURL)
+		fmt.Printf("Providing AsyncAPI %s (stability: %s) to %s...\n", producerName, stability, client.BaseURL)
 		resp, err = client.ProvideAsyncApi(payload, compression)
 	} else if apiType == "proto" || apiType == "grpc" {
 		payload := api.ProvideProtoPayload{
-			ServiceName:  serviceName,
-			Branch:       branch,
+			ProducerName: producerName,
 			ProtoContent: content,
-			BaseVersion:  effectiveBaseVersion,
-			Force:        force,
+			Stability:    stability,
 		}
-		fmt.Printf("Providing Proto %s (branch: %s, force: %v) to %s...\n", payload.ServiceName, payload.Branch, payload.Force, client.BaseURL)
+		fmt.Printf("Providing Proto %s (stability: %s) to %s...\n", producerName, stability, client.BaseURL)
 		resp, err = client.ProvideProto(payload, compression)
 	} else {
 		return fmt.Errorf("unsupported apiType: %s", apiType)
 	}
 
 	if err != nil {
+		var conflict *api.ConflictError
+		if errors.As(err, &conflict) && conflict.ProposedVersion != "" {
+			versionHome := "info.version"
+			if apiType == "proto" || apiType == "grpc" {
+				versionHome = "the // sanshain-version comment"
+			}
+			return fmt.Errorf("%s\n  Publish as %s — update %s in %s and re-run",
+				conflict.Message, conflict.ProposedVersion, versionHome, filePath)
+		}
 		return err
 	}
 
-	// Feature 2: Log summary and save state
 	if resp != nil {
-		fmt.Printf("\u2713 Provided to Sanshain v%d: %d new, %d updated, %d deleted endpoints\n",
-			resp.Version, resp.Changes.Inserts, resp.Changes.Updates, resp.Changes.Deletes)
-		responseHash := resp.ContentHash
-		if responseHash == "" {
-			responseHash = contentHash
-		}
-		sc.UpdateProvideEntry(fileKey, responseHash, resp.Version)
-		_ = sc.Save()
+		fmt.Printf("✓ Provided %s v%s (%s): %d new, %d updated, %d deleted endpoints\n",
+			producerName, resp.Version, resp.Stability,
+			resp.Changes.Inserts, resp.Changes.Updates, resp.Changes.Deletes)
 	}
 
 	return nil
@@ -240,7 +227,7 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 		if cfg.Strict {
 			return fmt.Errorf("serviceName is required (in sanshain.yaml or via environment)")
 		}
-		fmt.Println("\u26a0 No serviceName configured. Skipping require. Set strict: true to fail in this case.")
+		fmt.Println("⚠ No serviceName configured. Skipping require. Set strict: true to fail in this case.")
 		return nil
 	}
 
@@ -248,19 +235,12 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 		if cfg.Strict {
 			return fmt.Errorf("no requires configured in sanshain.yaml")
 		}
-		fmt.Println("\u26a0 No requires configured in sanshain.yaml. Skipping. Set strict: true to fail in this case.")
+		fmt.Println("⚠ No requires configured in sanshain.yaml. Skipping. Set strict: true to fail in this case.")
 		return nil
 	}
 
-	currentBranch := git.GetCurrentBranch()
-
 	for _, req := range cfg.Requires {
-		reqBranch := req.Branch
-		if reqBranch == "" {
-			reqBranch = currentBranch
-		}
-
-		fmt.Printf("Requiring %s (branch: %s) from %s...\n", req.ServiceName, reqBranch, cfg.SanshainURL)
+		fmt.Printf("Requiring %s@%s from %s...\n", req.ServiceName, req.Version, cfg.SanshainURL)
 
 		var result *api.RequireResult
 		var cacheKey string
@@ -268,7 +248,7 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 
 		if len(req.Endpoints) == 1 {
 			endpoint := req.Endpoints[0]
-			cacheKey = cache.RequireKey(req.ServiceName, reqBranch, endpoint.Method, endpoint.Path)
+			cacheKey = cache.RequireKey(req.ServiceName, req.Version, endpoint.Method, endpoint.Path)
 			cachedEntry := sc.GetRequireEntry(cacheKey)
 			cachedEtag := ""
 			if cachedEntry != nil {
@@ -276,7 +256,7 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 			}
 
 			var reqErr error
-			result, reqErr = client.RequireWithEtag(cfg.ServiceName, req.ServiceName, reqBranch, endpoint.Path, endpoint.Method, req.Timeout, false, req.ApiType, cachedEtag)
+			result, reqErr = client.RequireWithEtag(cfg.ServiceName, req.ServiceName, req.Version, endpoint.Path, endpoint.Method, false, req.ApiType, cachedEtag)
 			if reqErr != nil {
 				return fmt.Errorf("failed to require %s: %w", req.ServiceName, reqErr)
 			}
@@ -284,7 +264,7 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 			ext := getExtension(req.ApiType)
 			fileName = req.ServiceName + "." + ext
 		} else {
-			cacheKey = cache.RequireBundleKey(req.ServiceName, reqBranch)
+			cacheKey = cache.RequireBundleKey(req.ServiceName, req.Version)
 			cachedEntry := sc.GetRequireEntry(cacheKey)
 			cachedEtag := ""
 			if cachedEntry != nil {
@@ -292,11 +272,10 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 			}
 
 			payload := api.RequireBundlePayload{
-				ClientName:  cfg.ServiceName,
-				ServiceName: req.ServiceName,
-				Branch:      reqBranch,
-				Timeout:     req.Timeout,
-				ApiType:     req.ApiType,
+				ConsumerName: cfg.ServiceName,
+				ProducerName: req.ServiceName,
+				Version:      req.Version,
+				ApiType:      req.ApiType,
 			}
 			for _, e := range req.Endpoints {
 				payload.Endpoints = append(payload.Endpoints, api.RequireBundleEndpoint{
@@ -315,7 +294,7 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 		}
 
 		if result.NotModified {
-			fmt.Printf("\u23ed %s spec unchanged (304), skipping code generation.\n", req.ServiceName)
+			fmt.Printf("⏭ %s spec unchanged (304), skipping code generation.\n", req.ServiceName)
 			continue
 		}
 

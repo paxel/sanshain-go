@@ -14,41 +14,36 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/paxel/sanshain/sanshain-go/internal/utils"
+	"github.com/paxel/sanshain/sanshain-go/v2/internal/utils"
 )
 
+// ProvidePayload is the 2.0 wire payload for POST /provide.
+// The version is not part of the payload — the server reads it from the
+// spec's info.version.
 type ProvidePayload struct {
-	ServiceName string `json:"servicename"`
-	Branch      string `json:"branch"`
-	OpenApiYaml string `json:"openapi_yaml"`
-	DryRun      bool   `json:"dry_run,omitempty"`
-	Force       bool   `json:"force,omitempty"`
-	ApiType     string `json:"api_type,omitempty"`
-	BaseVersion *int   `json:"base_version,omitempty"`
+	ProducerName string `json:"producername"`
+	OpenApiYaml  string `json:"openapi_yaml"`
+	Stability    string `json:"stability"`
+	DryRun       bool   `json:"dry_run,omitempty"`
 }
 
 type ProvideAsyncApiPayload struct {
-	ServiceName  string `json:"servicename"`
-	Branch       string `json:"branch"`
+	ProducerName string `json:"producername"`
 	AsyncApiYaml string `json:"asyncapi_yaml"`
+	Stability    string `json:"stability"`
 	DryRun       bool   `json:"dry_run,omitempty"`
-	Force        bool   `json:"force,omitempty"`
-	ApiType      string `json:"api_type,omitempty"`
-	BaseVersion  *int   `json:"base_version,omitempty"`
 }
 
 type ProvideProtoPayload struct {
-	ServiceName  string `json:"servicename"`
-	Branch       string `json:"branch"`
+	ProducerName string `json:"producername"`
 	ProtoContent string `json:"proto_content"`
+	Stability    string `json:"stability"`
 	DryRun       bool   `json:"dry_run,omitempty"`
-	Force        bool   `json:"force,omitempty"`
-	ApiType      string `json:"api_type,omitempty"`
-	BaseVersion  *int   `json:"base_version,omitempty"`
 }
 
 type ProvideResponse struct {
-	Version     int            `json:"version"`
+	Version     string         `json:"version"`
+	Stability   string         `json:"stability"`
 	ContentHash string         `json:"content_hash"`
 	Changes     ProvideChanges `json:"changes"`
 }
@@ -70,20 +65,52 @@ type RequireBundleEndpoint struct {
 	Method string `json:"method"`
 }
 
+// RequireBundlePayload is the 2.0 wire payload for POST /require-bundle.
 type RequireBundlePayload struct {
-	ClientName  string                  `json:"clientname"`
-	ServiceName string                  `json:"servicename"`
-	Branch      string                  `json:"branch"`
-	Endpoints   []RequireBundleEndpoint `json:"endpoints"`
-	Timeout     int                     `json:"timeout,omitempty"`
-	DryRun      bool                    `json:"dry_run,omitempty"`
-	ApiType     string                  `json:"api_type,omitempty"`
+	ConsumerName string                  `json:"consumername"`
+	ProducerName string                  `json:"producername"`
+	Version      string                  `json:"version"`
+	ApiType      string                  `json:"api_type,omitempty"`
+	Endpoints    []RequireBundleEndpoint `json:"endpoints"`
+	DryRun       bool                    `json:"dry_run,omitempty"`
+}
+
+// ConflictError is a 409 rejection by the server's version rules.
+// ProposedVersion carries the next free version to publish as instead.
+type ConflictError struct {
+	Message         string
+	ProposedVersion string
+}
+
+func (e *ConflictError) Error() string {
+	if e.ProposedVersion != "" {
+		return fmt.Sprintf("%s (proposed version: %s)", e.Message, e.ProposedVersion)
+	}
+	return e.Message
+}
+
+// errorBody is the JSON error shape every non-2xx Sanshain response carries.
+type errorBody struct {
+	Error           string `json:"error"`
+	ProposedVersion string `json:"proposed_version"`
+}
+
+func parseErrorBody(body string) errorBody {
+	var eb errorBody
+	_ = json.Unmarshal([]byte(body), &eb)
+	if eb.Error == "" {
+		eb.Error = sanitize(body)
+	}
+	return eb
 }
 
 type SanshainClient struct {
 	BaseURL    string
 	Token      string
 	HTTPClient *http.Client
+
+	serverChecked  bool
+	preTwoDiagnose error
 }
 
 func NewSanshainClient(baseURL, token string, insecure bool) *SanshainClient {
@@ -103,18 +130,105 @@ func NewSanshainClient(baseURL, token string, insecure bool) *SanshainClient {
 }
 
 func (c *SanshainClient) Provide(payload ProvidePayload, compression bool) (*ProvideResponse, error) {
-	payload.ApiType = cmp.Or(payload.ApiType, "openapi")
 	return c.postProvide("/provide", payload, compression)
 }
 
 func (c *SanshainClient) ProvideAsyncApi(payload ProvideAsyncApiPayload, compression bool) (*ProvideResponse, error) {
-	payload.ApiType = cmp.Or(payload.ApiType, "asyncapi")
 	return c.postProvide("/provide/asyncapi", payload, compression)
 }
 
 func (c *SanshainClient) ProvideProto(payload ProvideProtoPayload, compression bool) (*ProvideResponse, error) {
-	payload.ApiType = cmp.Or(payload.ApiType, "proto")
 	return c.postProvide("/provide/grpc", payload, compression)
+}
+
+// GetServerVersion reads the running instance's own build version
+// from GET /version.
+func (c *SanshainClient) GetServerVersion() (string, error) {
+	req, err := http.NewRequest("GET", c.BaseURL+"/version", nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := c.readBody(resp)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("GET /version failed with status %d", resp.StatusCode)
+	}
+
+	var v struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal([]byte(body), &v); err != nil {
+		return "", err
+	}
+	return v.Version, nil
+}
+
+// preTwoServerError lazily checks (at most once per client) whether the
+// server is a pre-2.0 Sanshain instance. It returns a replacement error
+// when it is, and nil otherwise (including when the check itself fails).
+func (c *SanshainClient) preTwoServerError() error {
+	if !c.serverChecked {
+		c.serverChecked = true
+		v, err := c.GetServerVersion()
+		if err == nil {
+			if major, ok := parseMajor(v); ok && major < 2 {
+				c.preTwoDiagnose = fmt.Errorf(
+					"Sanshain server at %s is %s; this client requires Sanshain 2.x — upgrade the server",
+					c.BaseURL, v)
+			}
+		}
+	}
+	return c.preTwoDiagnose
+}
+
+func parseMajor(version string) (int, bool) {
+	part, _, _ := strings.Cut(strings.TrimSpace(version), ".")
+	major, err := strconv.Atoi(part)
+	if err != nil {
+		return 0, false
+	}
+	return major, true
+}
+
+// provideFailure turns a failed provide response into an error, diagnosing
+// pre-2.0 servers and surfacing 409 version-rule rejections.
+func (c *SanshainClient) provideFailure(resp *http.Response, body string) error {
+	if err := c.preTwoServerError(); err != nil {
+		return err
+	}
+	eb := parseErrorBody(body)
+	if resp.StatusCode == http.StatusConflict {
+		return &ConflictError{Message: eb.Error, ProposedVersion: eb.ProposedVersion}
+	}
+	return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, sanitize(body))
+}
+
+// requireFailure turns a failed require response into an error, diagnosing
+// pre-2.0 servers and keeping 404 (unknown) distinct from 410 (absent).
+func (c *SanshainClient) requireFailure(resp *http.Response, body, producerName, version string) error {
+	if err := c.preTwoServerError(); err != nil {
+		return err
+	}
+	eb := parseErrorBody(body)
+	switch resp.StatusCode {
+	case http.StatusNotFound:
+		return fmt.Errorf(
+			"unknown producer or version (404): %s — the pin %s@%s does not exist on the server; fix the version in sanshain.yaml (list available: GET /producers/%s/versions)",
+			eb.Error, producerName, version, producerName)
+	case http.StatusGone:
+		return fmt.Errorf(
+			"endpoint absent (410): version %s of %s exists but deliberately lacks the requested endpoint(s): %s",
+			version, producerName, eb.Error)
+	}
+	return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, sanitize(body))
 }
 
 func (c *SanshainClient) post(path string, payload any, compression bool, extraHeaders http.Header) (*http.Response, error) {
@@ -160,17 +274,13 @@ func (c *SanshainClient) postProvide(path string, payload any, compression bool)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusConflict {
-		return nil, fmt.Errorf("Concurrent modification detected. Server version has advanced beyond your base_version. Re-run to fetch the latest state.")
-	}
-
 	respBody, err := c.readBody(resp)
 	if err != nil {
 		return nil, err
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, sanitize(respBody))
+		return nil, c.provideFailure(resp, respBody)
 	}
 
 	var provideResp ProvideResponse
@@ -180,15 +290,15 @@ func (c *SanshainClient) postProvide(path string, payload any, compression bool)
 	return &provideResp, nil
 }
 
-func (c *SanshainClient) Require(clientName, serviceName, branch, path, method string, timeout int, dryRun bool, apiType string) (string, error) {
-	result, err := c.RequireWithEtag(clientName, serviceName, branch, path, method, timeout, dryRun, apiType, "")
+func (c *SanshainClient) Require(consumerName, producerName, version, path, method string, dryRun bool, apiType string) (string, error) {
+	result, err := c.RequireWithEtag(consumerName, producerName, version, path, method, dryRun, apiType, "")
 	if err != nil {
 		return "", err
 	}
 	return result.Content, nil
 }
 
-func (c *SanshainClient) RequireWithEtag(clientName, serviceName, branch, reqPath, method string, timeout int, dryRun bool, apiType string, etag string) (*RequireResult, error) {
+func (c *SanshainClient) RequireWithEtag(consumerName, producerName, version, reqPath, method string, dryRun bool, apiType string, etag string) (*RequireResult, error) {
 	endpoint := "/require"
 	if apiType == "asyncapi" {
 		endpoint = "/require/asyncapi"
@@ -201,18 +311,12 @@ func (c *SanshainClient) RequireWithEtag(clientName, serviceName, branch, reqPat
 		return nil, err
 	}
 
-	apiType = cmp.Or(apiType, "openapi")
-
 	q := u.Query()
-	q.Set("clientname", clientName)
-	q.Set("servicename", serviceName)
-	q.Set("branch", branch)
+	q.Set("consumername", consumerName)
+	q.Set("producername", producerName)
+	q.Set("version", version)
 	q.Set("path", reqPath)
 	q.Set("method", method)
-	q.Set("api_type", apiType)
-	if timeout > 0 {
-		q.Set("timeout", strconv.Itoa(timeout))
-	}
 	if dryRun {
 		q.Set("dry_run", "true")
 	}
@@ -245,7 +349,7 @@ func (c *SanshainClient) RequireWithEtag(clientName, serviceName, branch, reqPat
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, sanitize(body))
+		return nil, c.requireFailure(resp, body, producerName, version)
 	}
 
 	responseEtag := resp.Header.Get("ETag")
@@ -283,7 +387,7 @@ func (c *SanshainClient) RequireBundleWithEtag(payload RequireBundlePayload, com
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, sanitize(respBody))
+		return nil, c.requireFailure(resp, respBody, payload.ProducerName, payload.Version)
 	}
 
 	return &RequireResult{

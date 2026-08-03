@@ -1,7 +1,6 @@
 package cache
 
 import (
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,19 +10,12 @@ import (
 
 const cacheFileName = ".sanshain-cache.json"
 
-type ProvideEntry struct {
-	ContentHash  string `json:"content_hash"`
-	Version      int    `json:"version"`
-	LastProvided string `json:"last_provided"`
-}
-
 type RequireEntry struct {
 	Etag        string `json:"etag"`
 	LastFetched string `json:"last_fetched"`
 }
 
 type CacheState struct {
-	Provides map[string]*ProvideEntry `json:"provides"`
 	Requires map[string]*RequireEntry `json:"requires"`
 }
 
@@ -42,7 +34,6 @@ func NewSanshainCache(cacheDir string) *SanshainCache {
 
 func (c *SanshainCache) load() {
 	c.State = CacheState{
-		Provides: make(map[string]*ProvideEntry),
 		Requires: make(map[string]*RequireEntry),
 	}
 	data, err := os.ReadFile(c.cacheFile)
@@ -50,9 +41,6 @@ func (c *SanshainCache) load() {
 		return
 	}
 	_ = json.Unmarshal(data, &c.State)
-	if c.State.Provides == nil {
-		c.State.Provides = make(map[string]*ProvideEntry)
-	}
 	if c.State.Requires == nil {
 		c.State.Requires = make(map[string]*RequireEntry)
 	}
@@ -70,18 +58,6 @@ func (c *SanshainCache) Save() error {
 	return os.WriteFile(c.cacheFile, data, 0600)
 }
 
-func (c *SanshainCache) GetProvideEntry(key string) *ProvideEntry {
-	return c.State.Provides[key]
-}
-
-func (c *SanshainCache) UpdateProvideEntry(key, contentHash string, version int) {
-	c.State.Provides[key] = &ProvideEntry{
-		ContentHash:  contentHash,
-		Version:      version,
-		LastProvided: time.Now().UTC().Format(time.RFC3339),
-	}
-}
-
 func (c *SanshainCache) GetRequireEntry(key string) *RequireEntry {
 	return c.State.Requires[key]
 }
@@ -93,15 +69,10 @@ func (c *SanshainCache) UpdateRequireEntry(key, etag string) {
 	}
 }
 
-func ComputeHash(content string) string {
-	h := sha256.Sum256([]byte(content))
-	return fmt.Sprintf("sha256:%x", h)
+func RequireKey(producerName, version, method, path string) string {
+	return fmt.Sprintf("%s|%s|%s|%s", producerName, version, method, path)
 }
 
-func RequireKey(serviceName, branch, method, path string) string {
-	return fmt.Sprintf("%s|%s|%s|%s", serviceName, branch, method, path)
-}
-
-func RequireBundleKey(serviceName, branch string) string {
-	return fmt.Sprintf("%s|%s|bundle", serviceName, branch)
+func RequireBundleKey(producerName, version string) string {
+	return fmt.Sprintf("%s|%s|bundle", producerName, version)
 }

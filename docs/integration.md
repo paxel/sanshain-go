@@ -8,7 +8,7 @@ You can use `go generate` to trigger the download of API dependencies and subseq
 
 1.  **Install `sanshain-go` and a generator** (e.g., `oapi-codegen`):
     ```bash
-    go install github.com/paxel/sanshain/sanshain-go/cmd/sanshain-go@latest
+    go install github.com/paxel/sanshain/sanshain-go/v2/cmd/sanshain-go@latest
     go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest
     ```
 
@@ -32,7 +32,7 @@ You can use `go generate` to trigger the download of API dependencies and subseq
 generate-api:
   image: golang:1.21
   script:
-    - go install github.com/paxel/sanshain/sanshain-go/cmd/sanshain-go@latest
+    - go install github.com/paxel/sanshain/sanshain-go/v2/cmd/sanshain-go@latest
     - sanshain-go require
     # ... run code generation and tests
   rules:
@@ -43,11 +43,27 @@ generate-api:
 ```yaml
 - name: Sanshain Require
   run: |
-    go install github.com/paxel/sanshain/sanshain-go/cmd/sanshain-go@latest
+    go install github.com/paxel/sanshain/sanshain-go/v2/cmd/sanshain-go@latest
     sanshain-go require
   env:
     SANSHAIN_TOKEN: ${{ secrets.SANSHAIN_TOKEN }}
 ```
+
+### Providing GA Releases from CI
+
+Every provide is a `snapshot` by default. On the protected-branch (release) pipeline, set the ga
+switch so the spec is published as an immutable GA version:
+
+```yaml
+- name: Sanshain Provide (GA)
+  run: sanshain-go provide
+  env:
+    SANSHAIN_TOKEN: ${{ secrets.SANSHAIN_TOKEN }}
+    SANSHAIN_GA: "true"
+```
+
+The published version is read from the spec file itself (`info.version`, or the
+`// sanshain-version:` comment for proto) — there is no branch detection and no version flag.
 
 ## Tips
 
