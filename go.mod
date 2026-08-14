@@ -1,4 +1,4 @@
-module github.com/paxel/sanshain/sanshain-go/v2
+module github.com/paxel/sanshain-go/v2
 
 go 1.23.3
 

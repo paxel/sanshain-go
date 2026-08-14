@@ -307,3 +307,251 @@ func TestSanshainClient_NoDiagnosisWhenServerIs2x(t *testing.T) {
 		t.Errorf("expected original 400 error, got %q", err.Error())
 	}
 }
+
+// --- 2.2: streams, retire, harvested subscriptions, line endings ---
+
+func TestResolveStream_DefaultsAndPrecedence(t *testing.T) {
+	s, err := ResolveStream(false, "", "", "")
+	if err != nil || s.Trunk || s.Tag != "" {
+		t.Fatalf("undeclared stream must be the zero value, got %+v, %v", s, err)
+	}
+	s, _ = ResolveStream(false, "", "true", "")
+	if !s.Trunk {
+		t.Error("SANSHAIN_TRUNK=true must declare trunk")
+	}
+	s, _ = ResolveStream(false, "from-flag", "", "from-env")
+	if s.Tag != "from-flag" {
+		t.Errorf("the flag must beat the environment, got %q", s.Tag)
+	}
+	s, _ = ResolveStream(false, "", "", "R")
+	if s.Tag != "R" {
+		t.Errorf("SANSHAIN_TAG must apply when no flag is set, got %q", s.Tag)
+	}
+}
+
+// The server answers 400 for a call carrying both; catching it locally names
+// the misconfiguration instead of the status code.
+func TestResolveStream_RefusesTrunkAndTagTogether(t *testing.T) {
+	if _, err := ResolveStream(true, "R", "", ""); err == nil {
+		t.Fatal("trunk and tag together must be refused")
+	} else if !strings.Contains(err.Error(), "never both") || !strings.Contains(err.Error(), "R") {
+		t.Errorf("the refusal names the collision and the tag, got: %v", err)
+	}
+	if _, err := ResolveStream(true, "", "", "R"); err == nil {
+		t.Error("the collision must be caught across sources too")
+	}
+}
+
+func TestProvide_CarriesTheDeclaredStream(t *testing.T) {
+	var rawBody map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		// A fresh map per request: Unmarshal into a reused map merges keys,
+		// which would let a previous request's stream leak into this one.
+		rawBody = map[string]any{}
+		_ = json.Unmarshal(body, &rawBody)
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"version":"1.0.0","stability":"snapshot","content_hash":"sha256:a","changes":{"inserts":0,"updates":0,"deletes":0}}`))
+	}))
+	defer ts.Close()
+	client := NewSanshainClient(ts.URL, "", false)
+
+	_, err := client.Provide(ProvidePayload{ProducerName: "p", OpenApiYaml: "x", Stability: "snapshot", Trunk: true}, false)
+	if err != nil {
+		t.Fatalf("Provide failed: %v", err)
+	}
+	if rawBody["trunk"] != true {
+		t.Errorf("trunk must ride the payload, got %v", rawBody)
+	}
+
+	_, _ = client.Provide(ProvidePayload{ProducerName: "p", OpenApiYaml: "x", Stability: "snapshot", Tag: "R"}, false)
+	if rawBody["tag"] != "R" {
+		t.Errorf("tag must ride the payload, got %v", rawBody)
+	}
+
+	// Undeclared: both fields absent, not false/empty.
+	_, _ = client.Provide(ProvidePayload{ProducerName: "p", OpenApiYaml: "x", Stability: "snapshot"}, false)
+	if _, present := rawBody["trunk"]; present {
+		t.Error("an undeclared stream must omit trunk entirely")
+	}
+	if _, present := rawBody["tag"]; present {
+		t.Error("an undeclared stream must omit tag entirely")
+	}
+}
+
+func TestRequireWithEtag_StreamRidesTheQuery(t *testing.T) {
+	var gotQuery map[string][]string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		_, _ = w.Write([]byte("paths: {}"))
+	}))
+	defer ts.Close()
+	client := NewSanshainClient(ts.URL, "", false)
+
+	_, err := client.RequireWithEtag("c", "p", "1.0.0", "/x", "GET", false, "", "", Stream{Trunk: true})
+	if err != nil {
+		t.Fatalf("require failed: %v", err)
+	}
+	if got := gotQuery["trunk"]; len(got) != 1 || got[0] != "true" {
+		t.Errorf("trunk must ride the query on the single require, got %v", gotQuery)
+	}
+
+	_, _ = client.RequireWithEtag("c", "p", "1.0.0", "/x", "GET", false, "", "", Stream{Tag: "R"})
+	if got := gotQuery["tag"]; len(got) != 1 || got[0] != "R" {
+		t.Errorf("tag must ride the query, got %v", gotQuery)
+	}
+
+	_, _ = client.RequireWithEtag("c", "p", "1.0.0", "/x", "GET", false, "", "", Stream{})
+	if _, present := gotQuery["trunk"]; present {
+		t.Error("an undeclared stream must not send trunk")
+	}
+}
+
+// The bundle endpoint reads the stream from the body — the server's handler
+// has no query extractor, so query parameters would be silently dropped and a
+// trunk build would record no trunk pins.
+func TestRequireBundle_StreamRidesTheBody(t *testing.T) {
+	var rawBody map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &rawBody)
+		_, _ = w.Write([]byte("paths: {}"))
+	}))
+	defer ts.Close()
+	client := NewSanshainClient(ts.URL, "", false)
+
+	payload := RequireBundlePayload{
+		ConsumerName: "c", ProducerName: "p", Version: "1.0.0",
+		Endpoints: []RequireBundleEndpoint{{Path: "/x", Method: "GET"}, {Path: "/y", Method: "GET"}},
+		Trunk:     true,
+	}
+	if _, err := client.RequireBundle(payload, false); err != nil {
+		t.Fatalf("bundle failed: %v", err)
+	}
+	if rawBody["trunk"] != true {
+		t.Errorf("trunk must ride the bundle body, got %v", rawBody)
+	}
+}
+
+func TestRetire_SendsRetiredWithNoDocument(t *testing.T) {
+	var rawBody map[string]any
+	var gotPath string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &rawBody)
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"tag_cleared":"messaging","trunk_pins_closed":2,"contracts_released":1}`))
+	}))
+	defer ts.Close()
+	client := NewSanshainClient(ts.URL, "", false)
+
+	shed, err := client.Retire("notifier", "asyncapi", false)
+	if err != nil {
+		t.Fatalf("Retire failed: %v", err)
+	}
+	if gotPath != "/provide/asyncapi" {
+		t.Errorf("a retire is the family's own provide call, got %s", gotPath)
+	}
+	if rawBody["retired"] != true || rawBody["producername"] != "notifier" {
+		t.Errorf("unexpected retire payload: %v", rawBody)
+	}
+	for _, forbidden := range []string{"asyncapi_yaml", "openapi_yaml", "stability", "trunk", "tag"} {
+		if _, present := rawBody[forbidden]; present {
+			t.Errorf("a retire must not carry %q, payload: %v", forbidden, rawBody)
+		}
+	}
+	if shed.TagCleared != "messaging" || shed.TrunkPinsClosed != 2 || shed.ContractsReleased != 1 {
+		t.Errorf("unexpected retire result: %+v", shed)
+	}
+}
+
+func TestRetire_ForbiddenNamesBothWaysIn(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/version" {
+			serveVersion(w, "2.2.0")
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":"retiring an API family of 'svc' requires the 'releaser' role"}`))
+	}))
+	defer ts.Close()
+	client := NewSanshainClient(ts.URL, "", false)
+
+	_, err := client.Retire("svc", "openapi", false)
+	if err == nil {
+		t.Fatal("expected a refusal")
+	}
+	if !strings.Contains(err.Error(), "releaser") || !strings.Contains(err.Error(), "maintainer") {
+		t.Errorf("the refusal names both ways in, got: %v", err)
+	}
+}
+
+// The remedy for a GA 403 is a role grant — nothing the Producer can change in
+// its own repository — so the message has to name it.
+func TestProvide_ForbiddenNamesTheReleaserRole(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/version" {
+			serveVersion(w, "2.2.0")
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":"publishing GA for 'svc' requires the 'releaser' role"}`))
+	}))
+	defer ts.Close()
+	client := NewSanshainClient(ts.URL, "", false)
+
+	_, err := client.Provide(ProvidePayload{ProducerName: "svc", OpenApiYaml: "x", Stability: "ga"}, false)
+	if err == nil {
+		t.Fatal("expected a refusal")
+	}
+	if !strings.Contains(err.Error(), "releaser") || !strings.Contains(err.Error(), "snapshot") {
+		t.Errorf("the refusal names the role and the fallback, got: %v", err)
+	}
+}
+
+func TestHarvestedSubscriptions_ParseAndClassify(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"version":"1.0.0","stability":"snapshot","content_hash":"sha256:a",
+			"changes":{"inserts":0,"updates":0,"deletes":0},
+			"harvested_subscriptions":[
+			  {"channel":"user/signup","message_name":"UserSignedUp","owner":"accounts"},
+			  {"channel":"order/placed","message_name":"OrderPlaced","drift":"expects 'total'"}]}`))
+	}))
+	defer ts.Close()
+	client := NewSanshainClient(ts.URL, "", false)
+
+	resp, err := client.ProvideAsyncApi(ProvideAsyncApiPayload{ProducerName: "p", AsyncApiYaml: "x", Stability: "snapshot"}, false)
+	if err != nil {
+		t.Fatalf("provide failed: %v", err)
+	}
+	if len(resp.HarvestedSubscriptions) != 2 {
+		t.Fatalf("expected 2 harvested subscriptions, got %d", len(resp.HarvestedSubscriptions))
+	}
+	resolved, drifting := resp.HarvestedSubscriptions[0], resp.HarvestedSubscriptions[1]
+	if resolved.Advisory() {
+		t.Error("a resolved subscription is not an advisory")
+	}
+	if !strings.Contains(resolved.Describe(), "accounts") {
+		t.Errorf("the line names the owner, got %q", resolved.Describe())
+	}
+	if !drifting.Advisory() {
+		t.Error("drift is an advisory")
+	}
+	if !strings.Contains(drifting.Describe(), "no publisher yet") || !strings.Contains(drifting.Describe(), "total") {
+		t.Errorf("the line names the gap and the drift, got %q", drifting.Describe())
+	}
+}
+
+// Byte-for-byte comparison server-side: a CRLF checkout must hash the same as
+// an LF one, or the same commit conflicts with itself depending on the runner.
+func TestNormalizeLineEndings(t *testing.T) {
+	if got := NormalizeLineEndings("a\r\nb\rc\n"); got != "a\nb\nc\n" {
+		t.Errorf("expected LF-only, got %q", got)
+	}
+	lf := "a\nb\n"
+	if got := NormalizeLineEndings(lf); got != lf {
+		t.Errorf("LF content must pass through unchanged, got %q", got)
+	}
+}

@@ -203,3 +203,27 @@ func TestValidateConfig(t *testing.T) {
 		}
 	})
 }
+
+// A retired entry names its family via apiType alone — requiring a file would
+// force projects to keep a dead spec on disk forever.
+func TestLoadConfig_RetiredEntryNeedsNoFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sanshain.yaml")
+	yaml := `
+sanshainUrl: http://localhost:8080
+serviceName: svc
+provides:
+  - apiType: asyncapi
+    retired: true
+`
+	if err := os.WriteFile(path, []byte(yaml), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("a retired entry without a file must parse, got: %v", err)
+	}
+	if len(cfg.Provides) != 1 || !cfg.Provides[0].Retired || cfg.Provides[0].ApiType != "asyncapi" {
+		t.Errorf("unexpected config: %+v", cfg.Provides)
+	}
+}

@@ -26,6 +26,11 @@ type ProvideConfig struct {
 	OpenApiFile  string `yaml:"openApiFile,omitempty"`
 	AsyncApiFile string `yaml:"asyncApiFile,omitempty"`
 	ProtoFile    string `yaml:"protoFile,omitempty"`
+	// The project no longer provides this family. Deleting the entry says
+	// nothing — Sanshain cannot tell a dropped protocol from a pipeline that
+	// merely stopped running — so keeping it and marking it retired is the
+	// explicit act. The provide command turns this into a retire call.
+	Retired bool `yaml:"retired,omitempty"`
 }
 
 type SanshainConfig struct {
@@ -130,6 +135,11 @@ func validateConfig(config *SanshainConfig) error {
 	}
 
 	validateProvide := func(p *ProvideConfig, i int) error {
+		if p.Retired {
+			// A retire names its family via apiType alone; a file may stay
+			// configured (the spec often still exists on disk) but is unused.
+			return nil
+		}
 		if p.File == "" && p.OpenApiFile == "" && p.AsyncApiFile == "" && p.ProtoFile == "" {
 			return fmt.Errorf("at least one of file, openApiFile, asyncApiFile, or protoFile must be specified in provide[%d]", i)
 		}

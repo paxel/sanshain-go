@@ -7,9 +7,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/paxel/sanshain/sanshain-go/v2/internal/api"
-	"github.com/paxel/sanshain/sanshain-go/v2/internal/cache"
-	"github.com/paxel/sanshain/sanshain-go/v2/internal/config"
+	"github.com/paxel/sanshain-go/v2/internal/api"
+	"github.com/paxel/sanshain-go/v2/internal/cache"
+	"github.com/paxel/sanshain-go/v2/internal/config"
 )
 
 // version is the client's own version. sanshain-go 2.x speaks the
@@ -21,6 +21,8 @@ func main() {
 	insecure := flag.Bool("insecure", false, "skip SSL certificate verification")
 	bestEffort := flag.Bool("best-effort", false, "continue on errors")
 	ga := flag.Bool("ga", false, "provide as immutable 'ga' instead of the default 'snapshot' (also: SANSHAIN_GA=true)")
+	trunk := flag.Bool("trunk", false, "this build is trunk's: it maintains the main graph (also: SANSHAIN_TRUNK=true)")
+	tag := flag.String("tag", "", "this build belongs to a sanshain-branch — release/hotfix pipelines (also: SANSHAIN_TAG)")
 	showVersion := flag.Bool("version", false, "print the client version and exit")
 	flag.Parse()
 
@@ -60,11 +62,17 @@ func main() {
 	client := api.NewSanshainClient(cfg.SanshainURL, token, *insecure)
 	sc := cache.NewSanshainCache(".")
 
+	stream, err := api.ResolveStream(*trunk, *tag, os.Getenv("SANSHAIN_TRUNK"), os.Getenv("SANSHAIN_TAG"))
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+
 	switch command {
 	case "provide":
-		err = handleProvide(client, cfg, resolveStability(*ga))
+		err = handleProvide(client, cfg, resolveStability(*ga), stream)
 	case "require":
-		err = handleRequire(client, cfg, sc)
+		err = handleRequire(client, cfg, sc, stream)
 	default:
 		fmt.Printf("Unknown command: %s\n", command)
 		usage()
@@ -99,7 +107,7 @@ func usage() {
 	flag.PrintDefaults()
 }
 
-func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, stability string) error {
+func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, stability string, stream api.Stream) error {
 	if cfg.ServiceName == "" {
 		if cfg.Strict {
 			return fmt.Errorf("serviceName is required (in sanshain.yaml or via environment)")
@@ -124,6 +132,13 @@ func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, stabi
 	provided := false
 
 	for _, p := range provides {
+		if p.Retired {
+			if err := retireFamily(client, cfg.ServiceName, p.ApiType); err != nil {
+				return err
+			}
+			provided = true
+			continue
+		}
 		type fileInfo struct {
 			path    string
 			apiType string
@@ -144,7 +159,7 @@ func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, stabi
 		}
 
 		for _, f := range files {
-			if err := provideFile(client, cfg.ServiceName, f.path, f.apiType, stability, cfg.Compression); err != nil {
+			if err := provideFile(client, cfg.ServiceName, f.path, f.apiType, stability, cfg.Compression, stream); err != nil {
 				return err
 			}
 			provided = true
@@ -162,13 +177,16 @@ func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, stabi
 	return nil
 }
 
-func provideFile(client *api.SanshainClient, producerName, filePath, apiType, stability string, compression bool) error {
+func provideFile(client *api.SanshainClient, producerName, filePath, apiType, stability string, compression bool, stream api.Stream) error {
 	/* #nosec G304 */
 	specData, err := os.ReadFile(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to read specification file %s: %w", filePath, err)
 	}
-	content := string(specData)
+	// Byte-for-byte comparison server-side: a CRLF checkout must hash the
+	// same as an LF one, or the same commit conflicts with itself depending
+	// on which runner published it.
+	content := api.NormalizeLineEndings(string(specData))
 
 	var resp *api.ProvideResponse
 
@@ -177,6 +195,8 @@ func provideFile(client *api.SanshainClient, producerName, filePath, apiType, st
 			ProducerName: producerName,
 			OpenApiYaml:  content,
 			Stability:    stability,
+			Trunk:        stream.Trunk,
+			Tag:          stream.Tag,
 		}
 		fmt.Printf("Providing OpenAPI %s (stability: %s) to %s...\n", producerName, stability, client.BaseURL)
 		resp, err = client.Provide(payload, compression)
@@ -185,6 +205,8 @@ func provideFile(client *api.SanshainClient, producerName, filePath, apiType, st
 			ProducerName: producerName,
 			AsyncApiYaml: content,
 			Stability:    stability,
+			Trunk:        stream.Trunk,
+			Tag:          stream.Tag,
 		}
 		fmt.Printf("Providing AsyncAPI %s (stability: %s) to %s...\n", producerName, stability, client.BaseURL)
 		resp, err = client.ProvideAsyncApi(payload, compression)
@@ -193,6 +215,8 @@ func provideFile(client *api.SanshainClient, producerName, filePath, apiType, st
 			ProducerName: producerName,
 			ProtoContent: content,
 			Stability:    stability,
+			Trunk:        stream.Trunk,
+			Tag:          stream.Tag,
 		}
 		fmt.Printf("Providing Proto %s (stability: %s) to %s...\n", producerName, stability, client.BaseURL)
 		resp, err = client.ProvideProto(payload, compression)
@@ -217,12 +241,45 @@ func provideFile(client *api.SanshainClient, producerName, filePath, apiType, st
 		fmt.Printf("✓ Provided %s v%s (%s): %d new, %d updated, %d deleted endpoints\n",
 			producerName, resp.Version, resp.Stability,
 			resp.Changes.Inserts, resp.Changes.Updates, resp.Changes.Deletes)
+		// Surface the harvest, or the feature is invisible: the server
+		// records the consumer edges either way, and a subscription
+		// expecting a field no contract guarantees would only be discovered
+		// later, on the GA provide that refuses it. Advisories never fail
+		// the build — that 409 is the server's job.
+		for _, sub := range resp.HarvestedSubscriptions {
+			if sub.Advisory() {
+				fmt.Printf("⚠ subscription %s\n", sub.Describe())
+			} else {
+				fmt.Printf("  subscription %s\n", sub.Describe())
+			}
+		}
 	}
 
 	return nil
 }
 
-func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *cache.SanshainCache) error {
+// retireFamily declares that this project no longer provides an API family,
+// because its sanshain.yaml entry says retired: true.
+func retireFamily(client *api.SanshainClient, producerName, apiType string) error {
+	family := apiType
+	if family == "" {
+		family = "openapi"
+	}
+	fmt.Printf("Retiring %s for %s...\n", family, producerName)
+	shed, err := client.Retire(producerName, family, false)
+	if err != nil {
+		return err
+	}
+	line := "✓ Retired"
+	if shed.TagCleared != "" {
+		line += ": cleared the '" + shed.TagCleared + "' capability"
+	}
+	fmt.Printf("%s, closed %d trunk pin(s), released %d contract(s). History and existing pins are untouched.\n",
+		line, shed.TrunkPinsClosed, shed.ContractsReleased)
+	return nil
+}
+
+func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *cache.SanshainCache, stream api.Stream) error {
 	if cfg.ServiceName == "" {
 		if cfg.Strict {
 			return fmt.Errorf("serviceName is required (in sanshain.yaml or via environment)")
@@ -256,7 +313,7 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 			}
 
 			var reqErr error
-			result, reqErr = client.RequireWithEtag(cfg.ServiceName, req.ServiceName, req.Version, endpoint.Path, endpoint.Method, false, req.ApiType, cachedEtag)
+			result, reqErr = client.RequireWithEtag(cfg.ServiceName, req.ServiceName, req.Version, endpoint.Path, endpoint.Method, false, req.ApiType, cachedEtag, stream)
 			if reqErr != nil {
 				return fmt.Errorf("failed to require %s: %w", req.ServiceName, reqErr)
 			}
@@ -276,6 +333,8 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 				ProducerName: req.ServiceName,
 				Version:      req.Version,
 				ApiType:      req.ApiType,
+				Trunk:        stream.Trunk,
+				Tag:          stream.Tag,
 			}
 			for _, e := range req.Endpoints {
 				payload.Endpoints = append(payload.Endpoints, api.RequireBundleEndpoint{

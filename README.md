@@ -6,7 +6,7 @@ A Go-based CLI tool and client for the [Sanshain Service](https://github.com/pax
 
 ## The 2.0 model in one paragraph
 
-Branches are gone. Every **provide** publishes a spec under the version declared *inside the spec file* — `info.version` for OpenAPI/AsyncAPI, a mandatory `// sanshain-version: MAJOR.MINOR.PATCH` comment for proto. Each provide is a `snapshot` (overwritable work-in-progress) unless the **ga switch** is set (`SANSHAIN_GA=true` or `--ga`), which publishes an immutable `ga` version. Every **require** pins an exact version — no ranges, no `latest`, no fallback, no waiting.
+Branches are gone. Every **provide** publishes a spec under the version declared *inside the spec file* — `info.version` for OpenAPI/AsyncAPI, a mandatory `// sanshain-version:` comment for proto. Accepted spellings are `MAJOR[.MINOR[.PATCH]]` with an optional leading `v`; omitted parts are zero (`v2` becomes `2.0.0`) and the stored form is always the full three-part version. Each provide is a `snapshot` (overwritable work-in-progress) unless the **ga switch** is set (`SANSHAIN_GA=true` or `--ga`), which publishes an immutable `ga` version. Every **require** pins an exact version — no ranges, no `latest`, no fallback, no waiting.
 
 ## Features
 
@@ -21,11 +21,11 @@ Branches are gone. Every **provide** publishes a spec under the version declared
 The 2.0 module lives under the `/v2` major-version path (Go semantic import versioning):
 
 ```bash
-go install github.com/paxel/sanshain/sanshain-go/v2/cmd/sanshain-go@latest
+go install github.com/paxel/sanshain-go/v2/cmd/sanshain-go@latest
 ```
 
 Importers of the library packages must update their import paths from
-`github.com/paxel/sanshain/sanshain-go/...` to `github.com/paxel/sanshain/sanshain-go/v2/...`.
+`github.com/paxel/sanshain-go/...` to `github.com/paxel/sanshain-go/v2/...`.
 
 ## Usage
 
@@ -69,7 +69,53 @@ SANSHAIN_GA=true sanshain-go provide
 ```
 
 There is no git detection and no branch matching: snapshot is always the default,
-GA is always an explicit act.
+GA is always an explicit act. Publishing GA requires the `releaser` role — without
+it the server answers `403` and the error names the role and the snapshot fallback.
+
+#### Streams: trunk and release branches
+
+Alongside stability, the pipeline declares which dependency graph its calls
+belong to. Like the ga switch this is a property of the invocation and never
+appears in `sanshain.yaml`:
+
+```bash
+sanshain-go --trunk provide      # trunk CI: maintains the main graph (also SANSHAIN_TRUNK=true)
+sanshain-go --tag R1 provide     # release/hotfix pipeline: updates that sanshain-branch (also SANSHAIN_TAG)
+```
+
+The same flags apply to `require` — trunk pins feed the main graph. Declaring
+both fails before any request is sent; an unknown tag answers `404` (a releaser
+must create the branch first).
+
+#### Retiring a protocol
+
+Removing a `provides` entry tells Sanshain nothing — it cannot distinguish a
+dropped protocol from a pipeline that stopped running. Keep the entry and mark
+it:
+
+```yaml
+provides:
+  - apiType: asyncapi
+    retired: true
+```
+
+The next `provide` retires that family: the capability tag is cleared, it
+leaves the current dependency graph, and its AsyncAPI channel contracts are
+released. Version history and existing Consumer pins are untouched. Retiring
+needs the `releaser` role — which a release pipeline already holds — or a
+maintainer grant on the Producer.
+
+> ⚠️ **AsyncAPI 2.x perspective.** Sanshain reads 2.x `publish`/`subscribe`
+> from the **application's** perspective: `publish` means *this service
+> publishes to the channel*, `subscribe` means *this service consumes it*. The
+> AsyncAPI 2.x specification defines those keywords from the **client's**
+> perspective — exactly inverted. Sanshain deliberately uses the
+> application-perspective reading because it matches the unambiguous 3.x
+> `send`/`receive` mapping. A document authored with the spec-literal reading
+> registers its contracts, and has its subscriptions harvested, exactly
+> backwards. Harvested subscriptions are printed after every AsyncAPI provide;
+> those with drift or no publisher yet are printed as warnings and never fail
+> the build.
 
 #### Require Dependencies
 Downloads the pinned API specs to the specified directories:
