@@ -240,6 +240,7 @@ func TestLoadConfig_PathsRelativeToConfigFile(t *testing.T) {
 	content := `
 sanshainUrl: http://localhost:8080
 serviceName: svc
+catalogInfo: catalog-info.yaml
 provide:
   file: api/openapi.yaml
 provides:
@@ -266,6 +267,7 @@ requires:
 	}
 
 	checks := []struct{ got, want string }{
+		{cfg.CatalogInfo, filepath.Join(dir, "catalog-info.yaml")},
 		{cfg.Provide.File, filepath.Join(dir, "api", "openapi.yaml")},
 		{cfg.Provides[0].OpenApiFile, filepath.Join(filepath.Dir(dir), "shared", "openapi.yaml")},
 		{cfg.Provides[0].AsyncApiFile, filepath.Join(dir, "async.yaml")},

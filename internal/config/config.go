@@ -37,12 +37,15 @@ type ProvideConfig struct {
 }
 
 type SanshainConfig struct {
-	SanshainURL string          `yaml:"sanshainUrl"`
-	ServiceName string          `yaml:"serviceName"`
-	ClientName  string          `yaml:"clientName,omitempty"` // alias
-	Compression bool            `yaml:"compression,omitempty"`
-	BestEffort  bool            `yaml:"bestEffort,omitempty"`
-	Strict      bool            `yaml:"strict,omitempty"`
+	SanshainURL string `yaml:"sanshainUrl"`
+	ServiceName string `yaml:"serviceName"`
+	ClientName  string `yaml:"clientName,omitempty"` // alias
+	Compression bool   `yaml:"compression,omitempty"`
+	BestEffort  bool   `yaml:"bestEffort,omitempty"`
+	Strict      bool   `yaml:"strict,omitempty"`
+	// Path to the project's Backstage catalog-info.yaml, pushed by the
+	// catalog command.
+	CatalogInfo string          `yaml:"catalogInfo,omitempty"`
 	Provide     *ProvideConfig  `yaml:"provide,omitempty"`
 	Provides    []ProvideConfig `yaml:"provides,omitempty"`
 	Requires    []RequireConfig `yaml:"requires,omitempty"`
@@ -101,6 +104,7 @@ func resolvePaths(config *SanshainConfig, baseDir string) {
 		resolve(&p.AsyncApiFile)
 		resolve(&p.ProtoFile)
 	}
+	resolve(&config.CatalogInfo)
 	if config.Provide != nil {
 		resolveProvide(config.Provide)
 	}

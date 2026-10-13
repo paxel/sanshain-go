@@ -76,6 +76,8 @@ func main() {
 		err = handleProvide(client, cfg, resolveStability(*ga), stream)
 	case "require":
 		err = handleRequire(client, cfg, sc, stream)
+	case "catalog":
+		err = handleCatalog(client, cfg, stream)
 	default:
 		fmt.Printf("Unknown command: %s\n", command)
 		usage()
@@ -83,7 +85,8 @@ func main() {
 	}
 
 	if err != nil {
-		if cfg.BestEffort {
+		var cfgErr *configError
+		if cfg.BestEffort && !errors.As(err, &cfgErr) {
 			fmt.Printf("Warning: %v\n", err)
 			return
 		}
@@ -131,6 +134,7 @@ func usage() {
 	fmt.Println("Commands:")
 	fmt.Println("  provide   Upload local API spec(s) to Sanshain (version read from the spec file)")
 	fmt.Println("  require   Download version-pinned specs from Sanshain")
+	fmt.Println("  catalog   Push the catalogInfo file (Backstage catalog-info.yaml); needs Sanshain Service 2.4.0+")
 	fmt.Println("Flags:")
 	flag.PrintDefaults()
 }
@@ -410,4 +414,60 @@ func getExtension(apiType string) string {
 		return "proto"
 	}
 	return "yaml"
+}
+
+// configError is a strict configuration failure. Best-effort softens failed
+// calls, never these.
+type configError struct {
+	msg string
+}
+
+func (e *configError) Error() string {
+	return e.msg
+}
+
+// handleCatalog pushes the catalogInfo file so Sanshain records the system's
+// Peripheral Resources. Strict here checks only serviceName and catalogInfo.
+func handleCatalog(client *api.SanshainClient, cfg *config.SanshainConfig, stream api.Stream) error {
+	if cfg.ServiceName == "" {
+		if cfg.Strict {
+			return &configError{"serviceName is required (in sanshain.yaml or via environment)"}
+		}
+		fmt.Println("⚠ No serviceName configured. Skipping catalog. Set strict: true to fail in this case.")
+		return nil
+	}
+	if cfg.CatalogInfo == "" {
+		if cfg.Strict {
+			return &configError{"strict: sanshain.yaml has no catalogInfo"}
+		}
+		fmt.Println("⚠ No catalogInfo in sanshain.yaml - skipping catalog.")
+		return nil
+	}
+
+	/* #nosec G304 */
+	content, err := os.ReadFile(cfg.CatalogInfo)
+	if err != nil {
+		return fmt.Errorf("failed to read catalogInfo file %s: %w", cfg.CatalogInfo, err)
+	}
+
+	fmt.Printf("Pushing catalog %s for %s to %s...\n", cfg.CatalogInfo, cfg.ServiceName, client.BaseURL)
+	resp, err := client.PushCatalog(cfg.ServiceName, string(content), stream.Trunk, cfg.Compression)
+	if err != nil {
+		var rejected *api.CatalogRejectedError
+		if errors.As(err, &rejected) {
+			return fmt.Errorf("Sanshain rejected %s: %s. The Component's metadata.name must equal serviceName '%s'.",
+				cfg.CatalogInfo, rejected.Message, cfg.ServiceName)
+		}
+		return err
+	}
+
+	graphs := "dev"
+	if resp.Trunk {
+		graphs = "main+dev"
+	}
+	fmt.Printf("Catalog recorded for %s (%s): %d resources\n", resp.System, graphs, len(resp.Resources))
+	for _, r := range resp.Resources {
+		fmt.Printf("  %s\n", r)
+	}
+	return nil
 }

@@ -65,6 +65,19 @@ switch so the spec is published as an immutable GA version:
 The published version is read from the spec file itself (`info.version`, or the
 `// sanshain-version:` comment for proto) — there is no branch detection and no version flag.
 
+### Pushing the Backstage Catalog from CI
+
+If the project has a Backstage `catalog-info.yaml`, set `catalogInfo` in `sanshain.yaml` and add a
+step of its own (needs Sanshain Service 2.4.0 or later):
+
+```yaml
+- name: Sanshain Catalog
+  run: sanshain-go catalog
+  env:
+    SANSHAIN_TOKEN: ${{ secrets.SANSHAIN_TOKEN }}
+    SANSHAIN_TRUNK: "true"   # only on the trunk pipeline
+```
+
 ## Tips
 
 - **Insecure Connections**: If your Sanshain instance uses a self-signed certificate, use the `--insecure` flag.

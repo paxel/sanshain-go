@@ -213,8 +213,8 @@ type SanshainClient struct {
 	Token      string
 	HTTPClient *http.Client
 
-	serverChecked  bool
-	preTwoDiagnose error
+	serverChecked bool
+	serverVersion string
 }
 
 func NewSanshainClient(baseURL, token string, insecure bool) *SanshainClient {
@@ -257,7 +257,7 @@ func (c *SanshainClient) Retire(producerName, apiType string, dryRun bool) (*Ret
 		path = "/provide/grpc"
 	}
 
-	resp, err := c.post(path, RetirePayload{ProducerName: producerName, Retired: true, DryRun: dryRun}, false, nil)
+	resp, err := c.send(http.MethodPost, path, RetirePayload{ProducerName: producerName, Retired: true, DryRun: dryRun}, false, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -308,22 +308,29 @@ func (c *SanshainClient) GetServerVersion() (string, error) {
 	return v.Version, nil
 }
 
-// preTwoServerError lazily checks (at most once per client) whether the
-// server is a pre-2.0 Sanshain instance. It returns a replacement error
-// when it is, and nil otherwise (including when the check itself fails).
-func (c *SanshainClient) preTwoServerError() error {
+// lazyServerVersion asks GET /version at most once per client and returns
+// the answer, or "" when the check failed.
+func (c *SanshainClient) lazyServerVersion() string {
 	if !c.serverChecked {
 		c.serverChecked = true
-		v, err := c.GetServerVersion()
-		if err == nil {
-			if major, ok := parseMajor(v); ok && major < 2 {
-				c.preTwoDiagnose = fmt.Errorf(
-					"Sanshain server at %s is %s; this client requires Sanshain 2.x — upgrade the server",
-					c.BaseURL, v)
-			}
+		if v, err := c.GetServerVersion(); err == nil {
+			c.serverVersion = v
 		}
 	}
-	return c.preTwoDiagnose
+	return c.serverVersion
+}
+
+// preTwoServerError lazily checks whether the server is a pre-2.0 Sanshain
+// instance. It returns a replacement error when it is, and nil otherwise
+// (including when the check itself fails).
+func (c *SanshainClient) preTwoServerError() error {
+	v := c.lazyServerVersion()
+	if major, ok := parseMajor(v); ok && major < 2 {
+		return fmt.Errorf(
+			"Sanshain server at %s is %s; this client requires Sanshain 2.x — upgrade the server",
+			c.BaseURL, v)
+	}
+	return nil
 }
 
 func parseMajor(version string) (int, bool) {
@@ -396,7 +403,9 @@ func (c *SanshainClient) requireFailure(resp *http.Response, body, producerName,
 	return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, sanitize(body))
 }
 
-func (c *SanshainClient) post(path string, payload any, compression bool, extraHeaders http.Header) (*http.Response, error) {
+// send issues an authenticated JSON request, gzip-compressing the body when
+// compression is on.
+func (c *SanshainClient) send(method, path string, payload any, compression bool, extraHeaders http.Header) (*http.Response, error) {
 	var body io.Reader
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
@@ -420,7 +429,7 @@ func (c *SanshainClient) post(path string, payload any, compression bool, extraH
 		body = bytes.NewReader(jsonData)
 	}
 
-	req, err := http.NewRequest("POST", c.BaseURL+path, body)
+	req, err := http.NewRequest(method, c.BaseURL+path, body)
 	if err != nil {
 		return nil, err
 	}
@@ -433,7 +442,7 @@ func (c *SanshainClient) post(path string, payload any, compression bool, extraH
 }
 
 func (c *SanshainClient) postProvide(path string, payload any, compression bool) (*ProvideResponse, error) {
-	resp, err := c.post(path, payload, compression, nil)
+	resp, err := c.send(http.MethodPost, path, payload, compression, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -453,6 +462,75 @@ func (c *SanshainClient) postProvide(path string, payload any, compression bool)
 		return nil, err
 	}
 	return &provideResp, nil
+}
+
+// CatalogPushPayload is the body of PUT /catalog/{systemname}. It has no tag
+// field: the server answers 422 to unknown fields, and only a trunk build
+// says anything about its stream.
+type CatalogPushPayload struct {
+	CatalogInfoYaml string `json:"catalog_info_yaml"`
+	Trunk           bool   `json:"trunk,omitempty"`
+}
+
+// CatalogPushResponse is the periphery the server now records for a system.
+type CatalogPushResponse struct {
+	System    string   `json:"system"`
+	Trunk     bool     `json:"trunk"`
+	Resources []string `json:"resources"`
+}
+
+// CatalogRejectedError is a 400 on a catalog push: Sanshain could not read
+// the file as the system's Component.
+type CatalogRejectedError struct {
+	Message string
+}
+
+func (e *CatalogRejectedError) Error() string {
+	return e.Message
+}
+
+// PushCatalog sends the system's Backstage catalog-info.yaml. It needs
+// Sanshain Service 2.4.0 or later; an older server answers 404.
+func (c *SanshainClient) PushCatalog(systemName, catalogInfoYaml string, trunk, compression bool) (*CatalogPushResponse, error) {
+	payload := CatalogPushPayload{CatalogInfoYaml: catalogInfoYaml, Trunk: trunk}
+	resp, err := c.send(http.MethodPut, "/catalog/"+url.PathEscape(systemName), payload, compression, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := c.readBody(resp)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, c.catalogFailure(resp, body)
+	}
+
+	var result CatalogPushResponse
+	if err := json.Unmarshal([]byte(body), &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// catalogFailure keeps the 400 rejection distinct and turns a 404 into the
+// service version the command needs.
+func (c *SanshainClient) catalogFailure(resp *http.Response, body string) error {
+	switch resp.StatusCode {
+	case http.StatusBadRequest:
+		return &CatalogRejectedError{Message: parseErrorBody(body).Error}
+	case http.StatusNotFound:
+		server := "server version unknown"
+		if v := c.lazyServerVersion(); v != "" {
+			server = "server is " + v
+		}
+		return fmt.Errorf("sanshain catalog needs Sanshain Service 2.4.0 or later (%s)", server)
+	}
+	if err := c.preTwoServerError(); err != nil {
+		return err
+	}
+	return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, sanitize(body))
 }
 
 func (c *SanshainClient) Require(consumerName, producerName, version, path, method string, dryRun bool, apiType string) (string, error) {
@@ -543,7 +621,7 @@ func (c *SanshainClient) RequireBundleWithEtag(payload RequireBundlePayload, com
 		headers.Set("If-None-Match", etag)
 	}
 
-	resp, err := c.post("/require-bundle", payload, compression, headers)
+	resp, err := c.send(http.MethodPost, "/require-bundle", payload, compression, headers)
 	if err != nil {
 		return nil, err
 	}

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"io"
@@ -565,5 +566,57 @@ func TestNormalizeLineEndings(t *testing.T) {
 	lf := "a\nb\n"
 	if got := NormalizeLineEndings(lf); got != lf {
 		t.Errorf("LF content must pass through unchanged, got %q", got)
+	}
+}
+
+func TestPushCatalog_PutsCompressedPayload(t *testing.T) {
+	var method, path, encoding, auth string
+	var body map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path = r.Method, r.URL.EscapedPath()
+		encoding, auth = r.Header.Get("Content-Encoding"), r.Header.Get("Authorization")
+		zr, err := gzip.NewReader(r.Body)
+		if err != nil {
+			t.Fatalf("expected a gzip body: %v", err)
+		}
+		raw, _ := io.ReadAll(zr)
+		_ = json.Unmarshal(raw, &body)
+		_, _ = w.Write([]byte(`{"system":"a/b","trunk":false,"resources":["resource:default/db"]}`))
+	}))
+	defer ts.Close()
+
+	client := NewSanshainClient(ts.URL, "tok", false)
+	resp, err := client.PushCatalog("a/b", "kind: Component", false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodPut || path != "/catalog/a%2Fb" {
+		t.Errorf("expected PUT /catalog/a%%2Fb, got %s %s", method, path)
+	}
+	if encoding != "gzip" || auth != "Bearer tok" {
+		t.Errorf("expected gzip and bearer auth, got %q %q", encoding, auth)
+	}
+	if body["catalog_info_yaml"] != "kind: Component" {
+		t.Errorf("unexpected body %v", body)
+	}
+	if _, present := body["trunk"]; present {
+		t.Errorf("trunk must be omitted when false, got %v", body)
+	}
+	if resp.System != "a/b" || len(resp.Resources) != 1 {
+		t.Errorf("unexpected response %+v", resp)
+	}
+}
+
+func TestPushCatalog_400IsRejection(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"no Component named 'svc'"}`))
+	}))
+	defer ts.Close()
+
+	_, err := NewSanshainClient(ts.URL, "", false).PushCatalog("svc", "x", false, false)
+	var rejected *CatalogRejectedError
+	if !errors.As(err, &rejected) || rejected.Message != "no Component named 'svc'" {
+		t.Errorf("expected a CatalogRejectedError, got %v", err)
 	}
 }

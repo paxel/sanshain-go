@@ -54,7 +54,7 @@ Every boolean switch read from the environment (`SANSHAIN_GA`, `SANSHAIN_TRUNK`,
 `SANSHAIN_BEST_EFFORT`) is on for `true` or `1` (trimmed, case-insensitive) and off for anything else.
 
 Every relative path in `sanshain.yaml` (`file`, `openApiFile`, `asyncApiFile`, `protoFile`,
-`outputDirectory`) is resolved against the directory that contains `sanshain.yaml`, not the
+`outputDirectory`, `catalogInfo`) is resolved against the directory that contains `sanshain.yaml`, not the
 current working directory. Absolute paths stay as they are. A build that points the client at
 another config file (`--config path/to/sanshain.yaml`) therefore finds the same files as a build
 started next to it.
@@ -136,6 +136,45 @@ export SANSHAIN_TOKEN=your_token
 sanshain-go require
 ```
 
+#### Catalog (Peripheral Resources)
+
+Pushes the project's Backstage `catalog-info.yaml` so the Sanshain network graph shows the
+**Peripheral Resources** (databases, buckets, queues, ...) the system depends on. Point to the
+file with `catalogInfo` in `sanshain.yaml`:
+
+```yaml
+serviceName: orders-service
+catalogInfo: catalog-info.yaml   # relative to sanshain.yaml
+```
+
+```bash
+export SANSHAIN_TOKEN=your_token
+sanshain-go catalog
+```
+
+**`catalog` requires Sanshain Service 2.4.0 or later**; all other commands work with any 2.x
+service. Against an older service the command fails with
+`sanshain catalog needs Sanshain Service 2.4.0 or later (server is <version>)`.
+
+- The call is `PUT /catalog/<serviceName>` with the file's content. A trunk build
+  (`--trunk` / `SANSHAIN_TRUNK`) updates the main graph as well as the dev graph; any other build
+  only the dev graph.
+- On success the recorded resources are printed:
+  ```
+  Catalog recorded for orders-service (main+dev): 2 resources
+    resource:default/orders-db
+    resource:default/orders-bucket
+  ```
+- Sanshain reads only the `Component` whose `metadata.name` equals `serviceName`. If it cannot
+  (usually a name mismatch), the command fails with `Sanshain rejected <file>: ...`.
+- Without `catalogInfo` the command warns and exits 0; with `strict: true` it fails. Strict here
+  checks only `serviceName` and `catalogInfo`.
+- With best-effort (`--best-effort` / `SANSHAIN_BEST_EFFORT`), a missing file or a failed call
+  is a warning and the command exits 0.
+
+Run it once per build as its own CI step, e.g. next to `provide`/`require` (see
+[docs/integration.md](docs/integration.md)).
+
 #### Version
 ```bash
 sanshain-go --version
@@ -195,6 +234,7 @@ When strict mode is enabled:
 - Missing `serviceName` → exit with error
 - No `provides` configured → exit with error
 - No `requires` configured → exit with error
+- No `catalogInfo` configured (for `catalog`, which checks only `serviceName` and `catalogInfo`) → exit with error
 
 ## Unknown Fields
 
