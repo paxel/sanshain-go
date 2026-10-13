@@ -279,3 +279,50 @@ requires:
 		}
 	}
 }
+
+// SANSHAIN_URL beats the yaml sanshainUrl and makes it optional; without it
+// the yaml value is used.
+func TestLoadConfig_SanshainURLPrecedence(t *testing.T) {
+	withURL := writeConfig(t, "sanshainUrl: http://from-yaml\nserviceName: svc\n")
+	withoutURL := writeConfig(t, "serviceName: svc\n")
+
+	t.Run("env beats yaml", func(t *testing.T) {
+		t.Setenv("SANSHAIN_URL", "http://from-env")
+		cfg, err := LoadConfig(withURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.SanshainURL != "http://from-env" {
+			t.Errorf("expected env URL, got %s", cfg.SanshainURL)
+		}
+	})
+
+	t.Run("yaml used when env unset", func(t *testing.T) {
+		t.Setenv("SANSHAIN_URL", "")
+		cfg, err := LoadConfig(withURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.SanshainURL != "http://from-yaml" {
+			t.Errorf("expected yaml URL, got %s", cfg.SanshainURL)
+		}
+	})
+
+	t.Run("env alone suffices", func(t *testing.T) {
+		t.Setenv("SANSHAIN_URL", "http://from-env")
+		cfg, err := LoadConfig(withoutURL)
+		if err != nil {
+			t.Fatalf("SANSHAIN_URL must satisfy the URL requirement, got %v", err)
+		}
+		if cfg.SanshainURL != "http://from-env" {
+			t.Errorf("expected env URL, got %s", cfg.SanshainURL)
+		}
+	})
+
+	t.Run("neither fails", func(t *testing.T) {
+		t.Setenv("SANSHAIN_URL", "")
+		if _, err := LoadConfig(withoutURL); err == nil {
+			t.Error("expected an error without any URL")
+		}
+	})
+}

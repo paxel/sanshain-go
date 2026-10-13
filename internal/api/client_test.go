@@ -331,6 +331,18 @@ func TestResolveStream_DefaultsAndPrecedence(t *testing.T) {
 
 // The server answers 400 for a call carrying both; catching it locally names
 // the misconfiguration instead of the status code.
+func TestResolveStream_TrunkEnvSwitchSpellings(t *testing.T) {
+	for value, want := range map[string]bool{"1": true, "TRUE": true, " true ": true, "yes": false, "false": false} {
+		s, err := ResolveStream(false, "", value, "")
+		if err != nil {
+			t.Fatalf("SANSHAIN_TRUNK=%q: unexpected error %v", value, err)
+		}
+		if s.Trunk != want {
+			t.Errorf("SANSHAIN_TRUNK=%q: trunk = %v, want %v", value, s.Trunk, want)
+		}
+	}
+}
+
 func TestResolveStream_RefusesTrunkAndTagTogether(t *testing.T) {
 	if _, err := ResolveStream(true, "R", "", ""); err == nil {
 		t.Fatal("trunk and tag together must be refused")

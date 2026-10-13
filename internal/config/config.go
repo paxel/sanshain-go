@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -60,6 +61,12 @@ func LoadConfig(configPath string) (*SanshainConfig, error) {
 
 	if err := checkRemovedFields(data); err != nil {
 		return nil, err
+	}
+
+	// SANSHAIN_URL overrides the yaml sanshainUrl, so the URL can live in
+	// the environment instead of the repository.
+	if envURL := strings.TrimSpace(os.Getenv("SANSHAIN_URL")); envURL != "" {
+		config.SanshainURL = envURL
 	}
 
 	if err := validateConfig(&config); err != nil {

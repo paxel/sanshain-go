@@ -38,3 +38,38 @@ func TestResolveStability(t *testing.T) {
 		}
 	})
 }
+
+func TestResolveStability_EnvSwitchSpellings(t *testing.T) {
+	for value, want := range map[string]string{"1": "ga", "TRUE": "ga", " true ": "ga", "yes": "snapshot"} {
+		t.Setenv("SANSHAIN_GA", value)
+		if got := resolveStability(false); got != want {
+			t.Errorf("SANSHAIN_GA=%q: got %s, want %s", value, got, want)
+		}
+	}
+}
+
+func TestResolveBestEffort(t *testing.T) {
+	cases := []struct {
+		name      string
+		env       string
+		flagValue bool
+		yamlValue bool
+		want      bool
+	}{
+		{"unset env keeps yaml off", "", false, false, false},
+		{"unset env keeps yaml on", "", false, true, true},
+		{"flag wins", "false", true, false, true},
+		{"1 is on", "1", false, false, true},
+		{"TRUE is on", "TRUE", false, false, true},
+		{"padded true is on", " true ", false, false, true},
+		{"yes is off and overrides yaml", "yes", false, true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("SANSHAIN_BEST_EFFORT", tc.env)
+			if got := resolveBestEffort(tc.flagValue, tc.yamlValue); got != tc.want {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

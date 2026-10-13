@@ -166,7 +166,7 @@ type Stream struct {
 // declaring both trunk and a tag is refused here — the server would answer 400,
 // and naming the misconfiguration locally beats spending a round trip on it.
 func ResolveStream(trunkFlag bool, tagFlag, trunkEnv, tagEnv string) (Stream, error) {
-	trunk := trunkFlag || trunkEnv == "true" || trunkEnv == "1"
+	trunk := trunkFlag || utils.IsOn(trunkEnv)
 	tag := strings.TrimSpace(tagFlag)
 	if tag == "" {
 		tag = strings.TrimSpace(tagEnv)

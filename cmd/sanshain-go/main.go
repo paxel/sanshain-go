@@ -10,6 +10,7 @@ import (
 	"github.com/paxel/sanshain-go/v2/internal/api"
 	"github.com/paxel/sanshain-go/v2/internal/cache"
 	"github.com/paxel/sanshain-go/v2/internal/config"
+	"github.com/paxel/sanshain-go/v2/internal/utils"
 )
 
 // version is the client's own version. sanshain-go 2.x speaks the
@@ -20,8 +21,8 @@ func main() {
 	configPath := flag.String("config", "sanshain.yaml", "path to sanshain.yaml")
 	insecure := flag.Bool("insecure", false, "skip SSL certificate verification")
 	bestEffort := flag.Bool("best-effort", false, "continue on errors")
-	ga := flag.Bool("ga", false, "provide as immutable 'ga' instead of the default 'snapshot' (also: SANSHAIN_GA=true)")
-	trunk := flag.Bool("trunk", false, "this build is trunk's: it maintains the main graph (also: SANSHAIN_TRUNK=true)")
+	ga := flag.Bool("ga", false, "provide as immutable 'ga' instead of the default 'snapshot' (also: SANSHAIN_GA=true or 1)")
+	trunk := flag.Bool("trunk", false, "this build is trunk's: it maintains the main graph (also: SANSHAIN_TRUNK=true or 1)")
 	tag := flag.String("tag", "", "this build belongs to a sanshain-branch — release/hotfix pipelines (also: SANSHAIN_TAG)")
 	showVersion := flag.Bool("version", false, "print the client version and exit")
 	flag.Parse()
@@ -41,8 +42,7 @@ func main() {
 	cfg, err := config.LoadConfig(*configPath)
 	if err != nil {
 		// Even if config fails to load, check best effort from flags/env
-		resolvedBestEffort := *bestEffort || os.Getenv("SANSHAIN_BEST_EFFORT") == "true"
-		if resolvedBestEffort {
+		if resolveBestEffort(*bestEffort, false) {
 			fmt.Printf("Warning loading config: %v\n", err)
 			cfg = &config.SanshainConfig{} // dummy config
 		} else {
@@ -51,12 +51,7 @@ func main() {
 		}
 	}
 
-	// Resolve best effort
-	if *bestEffort {
-		cfg.BestEffort = true
-	} else if env := os.Getenv("SANSHAIN_BEST_EFFORT"); env != "" {
-		cfg.BestEffort = env == "true"
-	}
+	cfg.BestEffort = resolveBestEffort(*bestEffort, cfg.BestEffort)
 
 	token := os.Getenv("SANSHAIN_TOKEN")
 	client := api.NewSanshainClient(cfg.SanshainURL, token, *insecure)
@@ -92,10 +87,22 @@ func main() {
 // resolveStability implements the ga switch: every provide is a snapshot
 // unless the --ga flag or SANSHAIN_GA=true explicitly says otherwise.
 func resolveStability(gaFlag bool) string {
-	if gaFlag || os.Getenv("SANSHAIN_GA") == "true" {
+	if gaFlag || utils.IsOn(os.Getenv("SANSHAIN_GA")) {
 		return "ga"
 	}
 	return "snapshot"
+}
+
+// resolveBestEffort applies --best-effort, then a set SANSHAIN_BEST_EFFORT,
+// then the yaml bestEffort value.
+func resolveBestEffort(flagValue, yamlValue bool) bool {
+	if flagValue {
+		return true
+	}
+	if env := os.Getenv("SANSHAIN_BEST_EFFORT"); env != "" {
+		return utils.IsOn(env)
+	}
+	return yamlValue
 }
 
 func usage() {

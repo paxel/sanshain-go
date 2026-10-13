@@ -47,6 +47,12 @@ requires:
         path: /users/{id}
 ```
 
+The environment variable `SANSHAIN_URL` overrides `sanshainUrl`; with it set, `sanshainUrl` can
+be left out of `sanshain.yaml`.
+
+Every boolean switch read from the environment (`SANSHAIN_GA`, `SANSHAIN_TRUNK`,
+`SANSHAIN_BEST_EFFORT`) is on for `true` or `1` (trimmed, case-insensitive) and off for anything else.
+
 Every relative path in `sanshain.yaml` (`file`, `openApiFile`, `asyncApiFile`, `protoFile`,
 `outputDirectory`) is resolved against the directory that contains `sanshain.yaml`, not the
 current working directory. Absolute paths stay as they are. A build that points the client at
