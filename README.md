@@ -239,7 +239,7 @@ When strict mode is enabled:
 ## Unknown Fields
 
 A key in `sanshain.yaml` that no Sanshain client knows (usually a typo) is reported once per run
-on stderr, and the run continues:
+on stderr before any other validation error, and the run continues:
 
 ```
    /\_/\  ?

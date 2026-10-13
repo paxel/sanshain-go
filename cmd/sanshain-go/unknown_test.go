@@ -1,46 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/paxel/sanshain-go/v2/internal/config"
 )
-
-func TestReportUnknownFields(t *testing.T) {
-	t.Run("nothing unknown prints nothing", func(t *testing.T) {
-		var out bytes.Buffer
-		if err := reportUnknownFields(&out, &config.SanshainConfig{Strict: true}); err != nil {
-			t.Fatal(err)
-		}
-		if out.Len() != 0 {
-			t.Errorf("expected no output, got %q", out.String())
-		}
-	})
-
-	t.Run("not strict warns and continues", func(t *testing.T) {
-		var out bytes.Buffer
-		if err := reportUnknownFields(&out, &config.SanshainConfig{UnknownFields: []string{"catalogInf"}}); err != nil {
-			t.Fatalf("expected no error, got %v", err)
-		}
-		if !strings.Contains(out.String(), "unknown field 'catalogInf' - ignored") {
-			t.Errorf("unexpected output %q", out.String())
-		}
-	})
-
-	t.Run("strict fails", func(t *testing.T) {
-		var out bytes.Buffer
-		err := reportUnknownFields(&out, &config.SanshainConfig{Strict: true, UnknownFields: []string{"catalogInf"}})
-		if err == nil {
-			t.Fatal("expected strict to fail")
-		}
-		if !strings.Contains(out.String(), "unknown field 'catalogInf' - rejected (strict)") {
-			t.Errorf("unexpected output %q", out.String())
-		}
-	})
-}
 
 const catProvide = `
 serviceName: svc
@@ -94,5 +58,39 @@ func TestMain_LegacyFieldStillErrorsBeforeCat(t *testing.T) {
 	}
 	if stderr != "" {
 		t.Errorf("no cat may precede the legacy error, got %q", stderr)
+	}
+}
+
+// A config that fails validation falls back to an empty config under
+// best-effort, and the cat still names the typo.
+func TestMain_BestEffortFallbackStillShowsCat(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "sanshain.yaml")
+	writeFile(t, cfgPath, "sanshainUrll: http://127.0.0.1:1\nserviceName: svc\n")
+
+	stdout, stderr, code := runMain(t, nil, "--config", cfgPath, "--best-effort", "require")
+	if code != 0 {
+		t.Fatalf("expected exit 0 under best-effort, got %d: %s", code, stdout)
+	}
+	if !strings.Contains(stderr, "sanshain.yaml: unknown field 'sanshainUrll' - ignored") {
+		t.Errorf("expected the cat on stderr, got %q", stderr)
+	}
+	if !strings.Contains(stdout, "Warning loading config: missing required field: sanshainUrl") {
+		t.Errorf("expected the config warning after the cat, got %q", stdout)
+	}
+}
+
+func TestMain_TypoShowsCatThenValidationError(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "sanshain.yaml")
+	writeFile(t, cfgPath, "sanshainUrll: http://127.0.0.1:1\nserviceName: svc\n")
+
+	stdout, stderr, code := runMain(t, nil, "--config", cfgPath, "require")
+	if code == 0 {
+		t.Fatal("expected the missing sanshainUrl to fail")
+	}
+	if !strings.Contains(stderr, "unknown field 'sanshainUrll' - ignored") {
+		t.Errorf("expected the cat on stderr, got %q", stderr)
+	}
+	if !strings.Contains(stdout, "Error loading config: missing required field: sanshainUrl") {
+		t.Errorf("expected the missing-field error, got %q", stdout)
 	}
 }

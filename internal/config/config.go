@@ -1,7 +1,9 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -49,21 +51,25 @@ type SanshainConfig struct {
 	Provide     *ProvideConfig  `yaml:"provide,omitempty"`
 	Provides    []ProvideConfig `yaml:"provides,omitempty"`
 	Requires    []RequireConfig `yaml:"requires,omitempty"`
-
-	// UnknownFields lists the keys sanshain.yaml carries that no Sanshain
-	// client knows, as paths in file order (e.g. "provides[1].verison").
-	UnknownFields []string `yaml:"-"`
 }
 
-func LoadConfig(configPath string) (*SanshainConfig, error) {
+// ErrUnknownFieldsStrict is returned when strict mode rejects unknown
+// sanshain.yaml fields. It is a configuration error best-effort never softens.
+var ErrUnknownFieldsStrict = errors.New("strict: sanshain.yaml has unknown fields")
+
+// LoadConfig reads sanshain.yaml. As soon as it parses as YAML, legacy fields
+// are rejected, then unknown fields are reported to warn (the puzzled cat) —
+// failing under strict — and only then is anything else validated, so a typo
+// is named even when it causes a later validation error.
+func LoadConfig(configPath string, warn io.Writer) (*SanshainConfig, error) {
 	/* #nosec G304 */
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	var config SanshainConfig
-	if err := yaml.Unmarshal(data, &config); err != nil {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
@@ -71,7 +77,18 @@ func LoadConfig(configPath string) (*SanshainConfig, error) {
 		return nil, err
 	}
 
-	config.UnknownFields = unknownFields(data)
+	if unknown := unknownFields(data); len(unknown) > 0 {
+		strict := strictSetting(data)
+		_, _ = fmt.Fprint(warn, PuzzledCat(unknown, strict))
+		if strict {
+			return nil, ErrUnknownFieldsStrict
+		}
+	}
+
+	var config SanshainConfig
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse config file: %w", err)
+	}
 
 	// SANSHAIN_URL overrides the yaml sanshainUrl, so the URL can live in
 	// the environment instead of the repository.
@@ -233,6 +250,16 @@ func validateConfig(config *SanshainConfig) error {
 	}
 
 	return nil
+}
+
+// strictSetting reads just the yaml strict flag, before the full typed
+// parse; a value that is not a boolean counts as off.
+func strictSetting(data []byte) bool {
+	var s struct {
+		Strict bool `yaml:"strict"`
+	}
+	_ = yaml.Unmarshal(data, &s)
+	return s.Strict
 }
 
 // knownFields per level are the union of the fields every Sanshain client

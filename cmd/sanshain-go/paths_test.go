@@ -63,7 +63,7 @@ requires:
         path: /x
 `)
 
-	cfg, err := config.LoadConfig(configPath)
+	cfg, err := config.LoadConfig(configPath, io.Discard)
 	if err != nil {
 		t.Fatalf("LoadConfig failed: %v", err)
 	}

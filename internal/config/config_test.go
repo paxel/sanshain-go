@@ -1,6 +1,9 @@
 package config
 
 import (
+	"bytes"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,7 +34,7 @@ requires:
         path: /health
 `)
 
-	cfg, err := LoadConfig(path)
+	cfg, err := LoadConfig(path, io.Discard)
 	if err != nil {
 		t.Fatalf("LoadConfig failed: %v", err)
 	}
@@ -65,7 +68,7 @@ requires:
         path: /health
 `)
 
-	_, err := LoadConfig(path)
+	_, err := LoadConfig(path, io.Discard)
 	if err == nil {
 		t.Fatal("expected error for missing version")
 	}
@@ -175,7 +178,7 @@ releaseBranches:
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			path := writeConfig(t, tc.yaml)
-			_, err := LoadConfig(path)
+			_, err := LoadConfig(path, io.Discard)
 			if err == nil {
 				t.Fatal("expected branch-era field to be rejected")
 			}
@@ -219,7 +222,7 @@ provides:
 	if err := os.WriteFile(path, []byte(yaml), 0600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := LoadConfig(path)
+	cfg, err := LoadConfig(path, io.Discard)
 	if err != nil {
 		t.Fatalf("a retired entry without a file must parse, got: %v", err)
 	}
@@ -261,7 +264,7 @@ requires:
 		t.Fatal(err)
 	}
 
-	cfg, err := LoadConfig(path)
+	cfg, err := LoadConfig(path, io.Discard)
 	if err != nil {
 		t.Fatalf("LoadConfig failed: %v", err)
 	}
@@ -290,7 +293,7 @@ func TestLoadConfig_SanshainURLPrecedence(t *testing.T) {
 
 	t.Run("env beats yaml", func(t *testing.T) {
 		t.Setenv("SANSHAIN_URL", "http://from-env")
-		cfg, err := LoadConfig(withURL)
+		cfg, err := LoadConfig(withURL, io.Discard)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -301,7 +304,7 @@ func TestLoadConfig_SanshainURLPrecedence(t *testing.T) {
 
 	t.Run("yaml used when env unset", func(t *testing.T) {
 		t.Setenv("SANSHAIN_URL", "")
-		cfg, err := LoadConfig(withURL)
+		cfg, err := LoadConfig(withURL, io.Discard)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -312,7 +315,7 @@ func TestLoadConfig_SanshainURLPrecedence(t *testing.T) {
 
 	t.Run("env alone suffices", func(t *testing.T) {
 		t.Setenv("SANSHAIN_URL", "http://from-env")
-		cfg, err := LoadConfig(withoutURL)
+		cfg, err := LoadConfig(withoutURL, io.Discard)
 		if err != nil {
 			t.Fatalf("SANSHAIN_URL must satisfy the URL requirement, got %v", err)
 		}
@@ -323,7 +326,7 @@ func TestLoadConfig_SanshainURLPrecedence(t *testing.T) {
 
 	t.Run("neither fails", func(t *testing.T) {
 		t.Setenv("SANSHAIN_URL", "")
-		if _, err := LoadConfig(withoutURL); err == nil {
+		if _, err := LoadConfig(withoutURL, io.Discard); err == nil {
 			t.Error("expected an error without any URL")
 		}
 	})
@@ -387,21 +390,74 @@ provides:
 	}
 }
 
-func TestLoadConfig_RecordsUnknownFields(t *testing.T) {
-	path := writeConfig(t, "sanshainUrl: http://x\ncatalogInf: a.yaml\n")
-	cfg, err := LoadConfig(path)
-	if err != nil {
+// The cat appears as soon as the YAML parses: after the legacy rejection,
+// before any other validation error the typo may cause.
+func TestLoadConfig_CatBeforeOtherValidation(t *testing.T) {
+	cases := []struct {
+		name    string
+		yaml    string
+		field   string
+		wantErr string
+	}{
+		{"sanshainUrl typo", "sanshainUrll: http://x\nserviceName: svc\n", "'sanshainUrll'", "missing required field: sanshainUrl"},
+		{"provide file typo", "sanshainUrl: http://x\nprovide: {fiel: a.yaml}\n", "'provide.fiel'", "at least one of file, openApiFile, asyncApiFile, or protoFile"},
+		{"requires version typo", `
+sanshainUrl: http://x
+requires:
+  - serviceName: o
+    verison: 1.0.0
+    outputDirectory: gen
+    endpoints:
+      - method: GET
+        path: /a
+`, "'requires[0].verison'", "missing 'version'"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("SANSHAIN_URL", "")
+			var warn bytes.Buffer
+			_, err := LoadConfig(writeConfig(t, tc.yaml), &warn)
+			want := "sanshain.yaml: unknown field " + tc.field + " - ignored"
+			if !strings.Contains(warn.String(), want) {
+				t.Errorf("expected cat with %q, got %q", want, warn.String())
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("expected the validation error %q after the cat, got %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestLoadConfig_StrictUnknownFailsBeforeOtherValidation(t *testing.T) {
+	t.Setenv("SANSHAIN_URL", "")
+	var warn bytes.Buffer
+	_, err := LoadConfig(writeConfig(t, "strict: true\nsanshainUrll: http://x\n"), &warn)
+	if !errors.Is(err, ErrUnknownFieldsStrict) {
+		t.Errorf("expected the strict unknown-field error, got %v", err)
+	}
+	if !strings.Contains(warn.String(), "unknown field 'sanshainUrll' - rejected (strict)") {
+		t.Errorf("unexpected cat %q", warn.String())
+	}
+}
+
+func TestLoadConfig_NoCatWithoutUnknownFields(t *testing.T) {
+	var warn bytes.Buffer
+	if _, err := LoadConfig(writeConfig(t, "sanshainUrl: http://x\nforce: true\ninsecure: true\n"), &warn); err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.UnknownFields) != 1 || cfg.UnknownFields[0] != "catalogInf" {
-		t.Errorf("expected [catalogInf], got %v", cfg.UnknownFields)
+	if warn.Len() != 0 {
+		t.Errorf("expected no cat, got %q", warn.String())
 	}
 }
 
 func TestLoadConfig_LegacyFieldErrorsBeforeUnknownFields(t *testing.T) {
+	var warn bytes.Buffer
 	path := writeConfig(t, "sanshainUrl: http://x\ncatalogInf: a.yaml\nbaseVersion: 3\n")
-	if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "'baseVersion' is no longer supported") {
+	if _, err := LoadConfig(path, &warn); err == nil || !strings.Contains(err.Error(), "'baseVersion' is no longer supported") {
 		t.Errorf("expected the legacy rejection, got %v", err)
+	}
+	if warn.Len() != 0 {
+		t.Errorf("no cat may precede the legacy error, got %q", warn.String())
 	}
 }
 
