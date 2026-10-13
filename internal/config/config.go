@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 )
@@ -65,7 +66,36 @@ func LoadConfig(configPath string) (*SanshainConfig, error) {
 		return nil, err
 	}
 
+	resolvePaths(&config, filepath.Dir(configPath))
+
 	return &config, nil
+}
+
+// resolvePaths makes every relative path in the config relative to the
+// directory holding sanshain.yaml instead of the working directory, so a build
+// pointed at another config file finds the same files. Absolute paths and
+// empty fields stay as they are.
+func resolvePaths(config *SanshainConfig, baseDir string) {
+	resolve := func(p *string) {
+		if *p != "" && !filepath.IsAbs(*p) {
+			*p = filepath.Join(baseDir, *p)
+		}
+	}
+	resolveProvide := func(p *ProvideConfig) {
+		resolve(&p.File)
+		resolve(&p.OpenApiFile)
+		resolve(&p.AsyncApiFile)
+		resolve(&p.ProtoFile)
+	}
+	if config.Provide != nil {
+		resolveProvide(config.Provide)
+	}
+	for i := range config.Provides {
+		resolveProvide(&config.Provides[i])
+	}
+	for i := range config.Requires {
+		resolve(&config.Requires[i].OutputDirectory)
+	}
 }
 
 // removedFields are the 1.x branch-era config fields. Each is a hard

@@ -47,6 +47,12 @@ requires:
         path: /users/{id}
 ```
 
+Every relative path in `sanshain.yaml` (`file`, `openApiFile`, `asyncApiFile`, `protoFile`,
+`outputDirectory`) is resolved against the directory that contains `sanshain.yaml`, not the
+current working directory. Absolute paths stay as they are. A build that points the client at
+another config file (`--config path/to/sanshain.yaml`) therefore finds the same files as a build
+started next to it.
+
 Every `requires` entry **must** carry a `version` pin. The 1.x branch-era fields
 (`branch`, `timeout`, `baseVersion`, `releaseBranches`) are rejected at config parse
 time with a migration hint naming the offending field.

@@ -42,8 +42,8 @@ requires:
 	if cfg.ServiceName != "test-service" {
 		t.Errorf("expected test-service, got %s", cfg.ServiceName)
 	}
-	if cfg.Provide.OpenApiFile != "api.yaml" {
-		t.Errorf("expected api.yaml, got %s", cfg.Provide.OpenApiFile)
+	if want := filepath.Join(filepath.Dir(path), "api.yaml"); cfg.Provide.OpenApiFile != want {
+		t.Errorf("expected %s, got %s", want, cfg.Provide.OpenApiFile)
 	}
 	if len(cfg.Requires) != 1 {
 		t.Fatalf("expected 1 require, got %d", len(cfg.Requires))
@@ -225,5 +225,57 @@ provides:
 	}
 	if len(cfg.Provides) != 1 || !cfg.Provides[0].Retired || cfg.Provides[0].ApiType != "asyncapi" {
 		t.Errorf("unexpected config: %+v", cfg.Provides)
+	}
+}
+
+// Relative paths resolve against the directory holding sanshain.yaml, never the
+// working directory; absolute paths stay as they are.
+func TestLoadConfig_PathsRelativeToConfigFile(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "elsewhere")
+	if err := os.MkdirAll(dir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	abs := filepath.Join(t.TempDir(), "abs.proto")
+	path := filepath.Join(dir, "sanshain.yaml")
+	content := `
+sanshainUrl: http://localhost:8080
+serviceName: svc
+provide:
+  file: api/openapi.yaml
+provides:
+  - openApiFile: ../shared/openapi.yaml
+    asyncApiFile: async.yaml
+    protoFile: ` + abs + `
+  - apiType: asyncapi
+    retired: true
+requires:
+  - serviceName: other
+    version: 1.0.0
+    outputDirectory: gen/other
+    endpoints:
+      - method: GET
+        path: /x
+`
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	checks := []struct{ got, want string }{
+		{cfg.Provide.File, filepath.Join(dir, "api", "openapi.yaml")},
+		{cfg.Provides[0].OpenApiFile, filepath.Join(filepath.Dir(dir), "shared", "openapi.yaml")},
+		{cfg.Provides[0].AsyncApiFile, filepath.Join(dir, "async.yaml")},
+		{cfg.Provides[0].ProtoFile, abs},
+		{cfg.Provides[1].File, ""},
+		{cfg.Requires[0].OutputDirectory, filepath.Join(dir, "gen", "other")},
+	}
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("expected %q, got %q", c.want, c.got)
+		}
 	}
 }

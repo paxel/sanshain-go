@@ -68,4 +68,4 @@ The published version is read from the spec file itself (`info.version`, or the
 ## Tips
 
 - **Insecure Connections**: If your Sanshain instance uses a self-signed certificate, use the `--insecure` flag.
-- **Custom Config**: Use `--config path/to/sanshain.yaml` if your config is not in the root directory.
+- **Custom Config**: Use `--config path/to/sanshain.yaml` if your config is not in the root directory. Relative paths inside it resolve against that file's directory.
