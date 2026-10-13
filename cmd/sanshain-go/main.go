@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -51,6 +52,13 @@ func main() {
 		}
 	}
 
+	// A strict rejection of unknown fields is a config error: best-effort
+	// does not soften it.
+	if err := reportUnknownFields(os.Stderr, cfg); err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+
 	cfg.BestEffort = resolveBestEffort(*bestEffort, cfg.BestEffort)
 
 	token := os.Getenv("SANSHAIN_TOKEN")
@@ -91,6 +99,19 @@ func resolveStability(gaFlag bool) string {
 		return "ga"
 	}
 	return "snapshot"
+}
+
+// reportUnknownFields prints the puzzled cat for unknown sanshain.yaml fields
+// and, under strict, fails.
+func reportUnknownFields(w io.Writer, cfg *config.SanshainConfig) error {
+	if len(cfg.UnknownFields) == 0 {
+		return nil
+	}
+	_, _ = fmt.Fprint(w, config.PuzzledCat(cfg.UnknownFields, cfg.Strict))
+	if cfg.Strict {
+		return errors.New("strict: sanshain.yaml has unknown fields")
+	}
+	return nil
 }
 
 // resolveBestEffort applies --best-effort, then a set SANSHAIN_BEST_EFFORT,

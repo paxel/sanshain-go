@@ -196,6 +196,23 @@ When strict mode is enabled:
 - No `provides` configured → exit with error
 - No `requires` configured → exit with error
 
+## Unknown Fields
+
+A key in `sanshain.yaml` that no Sanshain client knows (usually a typo) is reported once per run
+on stderr, and the run continues:
+
+```
+   /\_/\  ?
+  ( O_o )   sanshain.yaml: unknown field 'catalogInf' - ignored
+ ---U-U---
+```
+
+Nested keys are named by their path, e.g. `provides[1].verison` or
+`requires[0].endpoints[2].methd`. Fields another Sanshain client supports (`force`, `insecure`,
+`combine`) are accepted silently. With `strict: true` the same notice ends in
+`rejected (strict)` and the command fails, also under best-effort. The 1.x fields listed above
+keep failing with their migration hint.
+
 ## Migrating from 1.x
 
 1. Put a strict `MAJOR.MINOR.PATCH` version in each provided spec (`info.version`, or a

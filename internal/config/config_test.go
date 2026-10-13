@@ -326,3 +326,94 @@ func TestLoadConfig_SanshainURLPrecedence(t *testing.T) {
 		}
 	})
 }
+
+func TestUnknownFields(t *testing.T) {
+	cases := []struct {
+		name string
+		yaml string
+		want []string
+	}{
+		{"single top-level", "sanshainUrl: http://x\ncatalogInf: a.yaml\n", []string{"catalogInf"}},
+		{"provide object", "sanshainUrl: http://x\nprovide:\n  file: a.yaml\n  fiel: b.yaml\n", []string{"provide.fiel"}},
+		{
+			name: "several in file order, nested",
+			yaml: `
+sanshainUrl: http://x
+catalogInf: a.yaml
+provides:
+  - file: a.yaml
+  - file: b.yaml
+    verison: 1
+requires:
+  - serviceName: o
+    version: 1.0.0
+    outputDirectroy: gen
+    outputDirectory: gen
+    endpoints:
+      - method: GET
+        path: /a
+      - method: GET
+        path: /b
+      - methd: GET
+        path: /c
+zzz: 1
+`,
+			want: []string{"catalogInf", "provides[1].verison", "requires[0].outputDirectroy", "requires[0].endpoints[2].methd", "zzz"},
+		},
+		{
+			name: "known but unsupported fields are accepted silently",
+			yaml: `
+sanshainUrl: http://x
+force: true
+insecure: true
+combine: true
+catalogInfo: catalog-info.yaml
+provides:
+  - file: a.yaml
+    combine: true
+`,
+			want: nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := unknownFields([]byte(tc.yaml))
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("expected %v, got %v", tc.want, got)
+			}
+		})
+	}
+}
+
+func TestLoadConfig_RecordsUnknownFields(t *testing.T) {
+	path := writeConfig(t, "sanshainUrl: http://x\ncatalogInf: a.yaml\n")
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.UnknownFields) != 1 || cfg.UnknownFields[0] != "catalogInf" {
+		t.Errorf("expected [catalogInf], got %v", cfg.UnknownFields)
+	}
+}
+
+func TestLoadConfig_LegacyFieldErrorsBeforeUnknownFields(t *testing.T) {
+	path := writeConfig(t, "sanshainUrl: http://x\ncatalogInf: a.yaml\nbaseVersion: 3\n")
+	if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "'baseVersion' is no longer supported") {
+		t.Errorf("expected the legacy rejection, got %v", err)
+	}
+}
+
+func TestPuzzledCat(t *testing.T) {
+	single := "   /\\_/\\  ?\n  ( O_o )   sanshain.yaml: unknown field 'catalogInf' - ignored\n ---U-U---\n"
+	if got := PuzzledCat([]string{"catalogInf"}, false); got != single {
+		t.Errorf("expected\n%s\ngot\n%s", single, got)
+	}
+	several := "   /\\_/\\  ?\n  ( O_o )   sanshain.yaml: unknown fields 'catalogInf', 'requires[0].verison' - ignored\n ---U-U---\n"
+	if got := PuzzledCat([]string{"catalogInf", "requires[0].verison"}, false); got != several {
+		t.Errorf("expected\n%s\ngot\n%s", several, got)
+	}
+	strict := "   /\\_/\\  ?\n  ( O_o )   sanshain.yaml: unknown field 'catalogInf' - rejected (strict)\n ---U-U---\n"
+	if got := PuzzledCat([]string{"catalogInf"}, true); got != strict {
+		t.Errorf("expected\n%s\ngot\n%s", strict, got)
+	}
+}

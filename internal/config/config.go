@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -45,6 +46,10 @@ type SanshainConfig struct {
 	Provide     *ProvideConfig  `yaml:"provide,omitempty"`
 	Provides    []ProvideConfig `yaml:"provides,omitempty"`
 	Requires    []RequireConfig `yaml:"requires,omitempty"`
+
+	// UnknownFields lists the keys sanshain.yaml carries that no Sanshain
+	// client knows, as paths in file order (e.g. "provides[1].verison").
+	UnknownFields []string `yaml:"-"`
 }
 
 func LoadConfig(configPath string) (*SanshainConfig, error) {
@@ -62,6 +67,8 @@ func LoadConfig(configPath string) (*SanshainConfig, error) {
 	if err := checkRemovedFields(data); err != nil {
 		return nil, err
 	}
+
+	config.UnknownFields = unknownFields(data)
 
 	// SANSHAIN_URL overrides the yaml sanshainUrl, so the URL can live in
 	// the environment instead of the repository.
@@ -222,4 +229,89 @@ func validateConfig(config *SanshainConfig) error {
 	}
 
 	return nil
+}
+
+// knownFields per level are the union of the fields every Sanshain client
+// knows: a field another client supports is not unknown here, even when this
+// client ignores it.
+var (
+	knownTopFields      = []string{"sanshainUrl", "serviceName", "clientName", "compression", "bestEffort", "strict", "force", "insecure", "combine", "catalogInfo", "provide", "provides", "requires"}
+	knownProvideFields  = []string{"file", "apiType", "retired", "openApiFile", "asyncApiFile", "protoFile", "combine"}
+	knownRequireFields  = []string{"serviceName", "apiType", "version", "outputDirectory", "endpoints"}
+	knownEndpointFields = []string{"method", "path"}
+)
+
+// unknownFields returns the path of every key no client knows, in file order.
+func unknownFields(data []byte) []string {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil || len(doc.Content) == 0 {
+		return nil
+	}
+	var found []string
+	walkMapping(doc.Content[0], "", knownTopFields, &found, func(key string, value *yaml.Node, path string) {
+		switch key {
+		case "provide":
+			walkMapping(value, path, knownProvideFields, &found, nil)
+		case "provides":
+			walkSequence(value, path, knownProvideFields, &found, nil)
+		case "requires":
+			walkSequence(value, path, knownRequireFields, &found, func(key string, value *yaml.Node, path string) {
+				if key == "endpoints" {
+					walkSequence(value, path, knownEndpointFields, &found, nil)
+				}
+			})
+		}
+	})
+	return found
+}
+
+// walkMapping records the unknown keys of a mapping node and hands each known
+// key to nested, depth first, so the result stays in file order.
+func walkMapping(node *yaml.Node, prefix string, known []string, found *[]string, nested func(key string, value *yaml.Node, path string)) {
+	if node.Kind != yaml.MappingNode {
+		return
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		key := node.Content[i].Value
+		path := key
+		if prefix != "" {
+			path = prefix + "." + key
+		}
+		if !slices.Contains(known, key) {
+			*found = append(*found, path)
+			continue
+		}
+		if nested != nil {
+			nested(key, node.Content[i+1], path)
+		}
+	}
+}
+
+func walkSequence(node *yaml.Node, prefix string, known []string, found *[]string, nested func(key string, value *yaml.Node, path string)) {
+	if node.Kind != yaml.SequenceNode {
+		return
+	}
+	for i, entry := range node.Content {
+		walkMapping(entry, fmt.Sprintf("%s[%d]", prefix, i), known, found, nested)
+	}
+}
+
+// PuzzledCat renders the unknown-field notice. Under strict the fields are
+// rejected rather than ignored.
+func PuzzledCat(fields []string, strict bool) string {
+	quoted := make([]string, len(fields))
+	for i, f := range fields {
+		quoted[i] = "'" + f + "'"
+	}
+	noun := "field"
+	if len(fields) > 1 {
+		noun = "fields"
+	}
+	verdict := "ignored"
+	if strict {
+		verdict = "rejected (strict)"
+	}
+	return "   /\\_/\\  ?\n" +
+		"  ( O_o )   sanshain.yaml: unknown " + noun + " " + strings.Join(quoted, ", ") + " - " + verdict + "\n" +
+		" ---U-U---\n"
 }
