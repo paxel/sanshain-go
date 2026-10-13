@@ -21,7 +21,6 @@ For recent changes, see [CHANGELOG.md](CHANGELOG.md).
 
 ### Added
 - `--ga` / `SANSHAIN_GA=true` publishes an immutable GA version; every other provide is a snapshot.
-- Every `requires` entry needs an exact `version` pin.
 - `--version` prints the client version.
 - `--best-effort` and `SANSHAIN_BEST_EFFORT` turn failures, including a config that cannot be loaded, into warnings.
 - A `409` on provide shows the server's message and the version to publish as instead.
@@ -31,6 +30,7 @@ For recent changes, see [CHANGELOG.md](CHANGELOG.md).
 ### Changed
 - Speaks the Sanshain Service 2.x API; the provided version is read from the spec file (`info.version`, or a `// sanshain-version:` comment for proto).
 - The module moved to the `/v2` major-version path.
+- Every `requires` entry needs an exact `version` pin.
 - Require ETag cache entries are keyed by producer and pinned version.
 
 ### Removed
@@ -55,7 +55,7 @@ For recent changes, see [CHANGELOG.md](CHANGELOG.md).
 - `strict: true` turns a missing `serviceName`, `provides` or `requires` into an error.
 
 ### Changed
-- A missing `serviceName`, no provide configuration or no requires now warn and skip instead of failing.
+- A missing `serviceName` or a missing provide configuration now warns and skips instead of failing.
 
 ## [1.1.0] - 2026-04-23
 
