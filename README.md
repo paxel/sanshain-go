@@ -175,6 +175,38 @@ service. Against an older service the command fails with
 Run it once per build as its own CI step, e.g. next to `provide`/`require` (see
 [docs/integration.md](docs/integration.md)).
 
+#### Requiring AsyncAPI as OpenAPI (`format`)
+
+A `requires` entry with `apiType: asyncapi` may add `format: openapi` to receive the endpoints as
+an OpenAPI document instead of AsyncAPI. That is the only allowed combination; any other `format`
+value, or `format` with another `apiType`, is a configuration error before any call is made. The
+file name and location are the same as without `format`. To get both formats, list the entry
+twice with different `outputDirectory` values:
+
+```yaml
+requires:
+  - serviceName: order-events
+    apiType: asyncapi
+    version: 1.4.0
+    outputDirectory: internal/events/asyncapi
+    endpoints:
+      - method: SEND
+        path: /orders
+  - serviceName: order-events
+    apiType: asyncapi
+    format: openapi              # needs Sanshain Service 2.4.0 or later
+    version: 1.4.0
+    outputDirectory: internal/events/openapi
+    endpoints:
+      - method: SEND
+        path: /orders
+```
+
+`format: openapi` needs Sanshain Service 2.4.0 or later. An older service ignores it and answers
+AsyncAPI; the client detects that and fails with
+`format: openapi needs Sanshain Service 2.4.0 or later (server is <version>)`, writing nothing
+(best-effort turns it into a warning).
+
 #### Version
 ```bash
 sanshain-go --version

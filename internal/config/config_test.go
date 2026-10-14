@@ -366,6 +366,11 @@ zzz: 1
 			want: []string{"catalogInf", "provides[1].verison", "requires[0].outputDirectroy", "requires[0].endpoints[2].methd", "zzz"},
 		},
 		{
+			name: "format on a requires entry is known",
+			yaml: "sanshainUrl: http://x\nrequires:\n  - serviceName: o\n    apiType: asyncapi\n    format: openapi\n",
+			want: nil,
+		},
+		{
 			name: "known but unsupported fields are accepted silently",
 			yaml: `
 sanshainUrl: http://x

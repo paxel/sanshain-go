@@ -322,7 +322,7 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 
 		if len(req.Endpoints) == 1 {
 			endpoint := req.Endpoints[0]
-			cacheKey = cache.RequireKey(req.ServiceName, req.Version, endpoint.Method, endpoint.Path)
+			cacheKey = cache.RequireKey(req.ServiceName, req.Version, endpoint.Method, endpoint.Path, req.Format)
 			cachedEntry := sc.GetRequireEntry(cacheKey)
 			cachedEtag := ""
 			if cachedEntry != nil {
@@ -330,7 +330,7 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 			}
 
 			var reqErr error
-			result, reqErr = client.RequireWithEtag(cfg.ServiceName, req.ServiceName, req.Version, endpoint.Path, endpoint.Method, false, req.ApiType, cachedEtag, stream)
+			result, reqErr = client.RequireWithEtag(cfg.ServiceName, req.ServiceName, req.Version, endpoint.Path, endpoint.Method, false, req.ApiType, cachedEtag, stream, req.Format)
 			if reqErr != nil {
 				return fmt.Errorf("failed to require %s: %w", req.ServiceName, reqErr)
 			}
@@ -338,7 +338,7 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 			ext := getExtension(req.ApiType)
 			fileName = req.ServiceName + "." + ext
 		} else {
-			cacheKey = cache.RequireBundleKey(req.ServiceName, req.Version)
+			cacheKey = cache.RequireBundleKey(req.ServiceName, req.Version, req.Format)
 			cachedEntry := sc.GetRequireEntry(cacheKey)
 			cachedEtag := ""
 			if cachedEntry != nil {
@@ -352,6 +352,7 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 				ApiType:      req.ApiType,
 				Trunk:        stream.Trunk,
 				Tag:          stream.Tag,
+				Format:       req.Format,
 			}
 			for _, e := range req.Endpoints {
 				payload.Endpoints = append(payload.Endpoints, api.RequireBundleEndpoint{

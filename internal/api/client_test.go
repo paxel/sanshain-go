@@ -401,7 +401,7 @@ func TestRequireWithEtag_StreamRidesTheQuery(t *testing.T) {
 	defer ts.Close()
 	client := NewSanshainClient(ts.URL, "", false)
 
-	_, err := client.RequireWithEtag("c", "p", "1.0.0", "/x", "GET", false, "", "", Stream{Trunk: true})
+	_, err := client.RequireWithEtag("c", "p", "1.0.0", "/x", "GET", false, "", "", Stream{Trunk: true}, "")
 	if err != nil {
 		t.Fatalf("require failed: %v", err)
 	}
@@ -409,12 +409,12 @@ func TestRequireWithEtag_StreamRidesTheQuery(t *testing.T) {
 		t.Errorf("trunk must ride the query on the single require, got %v", gotQuery)
 	}
 
-	_, _ = client.RequireWithEtag("c", "p", "1.0.0", "/x", "GET", false, "", "", Stream{Tag: "R"})
+	_, _ = client.RequireWithEtag("c", "p", "1.0.0", "/x", "GET", false, "", "", Stream{Tag: "R"}, "")
 	if got := gotQuery["tag"]; len(got) != 1 || got[0] != "R" {
 		t.Errorf("tag must ride the query, got %v", gotQuery)
 	}
 
-	_, _ = client.RequireWithEtag("c", "p", "1.0.0", "/x", "GET", false, "", "", Stream{})
+	_, _ = client.RequireWithEtag("c", "p", "1.0.0", "/x", "GET", false, "", "", Stream{}, "")
 	if _, present := gotQuery["trunk"]; present {
 		t.Error("an undeclared stream must not send trunk")
 	}

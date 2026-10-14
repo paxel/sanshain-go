@@ -23,6 +23,9 @@ type RequireConfig struct {
 	Version         string           `yaml:"version"`
 	OutputDirectory string           `yaml:"outputDirectory"`
 	Endpoints       []EndpointConfig `yaml:"endpoints"`
+	// Format asks for the endpoints in another document format. Only
+	// "openapi" with apiType asyncapi is allowed.
+	Format string `yaml:"format,omitempty"`
 }
 
 type ProvideConfig struct {
@@ -232,6 +235,11 @@ func validateConfig(config *SanshainConfig) error {
 				"requires[%d] (%s): missing 'version' — Sanshain 2.0 pins exact versions; add version: 1.2.0 (list available: GET /producers/%s/versions)",
 				i, req.ServiceName, req.ServiceName)
 		}
+		if req.Format != "" && (req.Format != "openapi" || req.ApiType != "asyncapi") {
+			return fmt.Errorf(
+				"requires[%d] (%s): format '%s' with apiType '%s' is not supported — the only allowed combination is 'apiType: asyncapi' with 'format: openapi'",
+				i, req.ServiceName, req.Format, req.ApiType)
+		}
 		if req.OutputDirectory == "" {
 			return fmt.Errorf("missing outputDirectory in requires[%d]", i)
 		}
@@ -268,7 +276,7 @@ func strictSetting(data []byte) bool {
 var (
 	knownTopFields      = []string{"sanshainUrl", "serviceName", "clientName", "compression", "bestEffort", "strict", "force", "insecure", "combine", "catalogInfo", "provide", "provides", "requires"}
 	knownProvideFields  = []string{"file", "apiType", "retired", "openApiFile", "asyncApiFile", "protoFile", "combine"}
-	knownRequireFields  = []string{"serviceName", "apiType", "version", "outputDirectory", "endpoints"}
+	knownRequireFields  = []string{"serviceName", "apiType", "version", "outputDirectory", "endpoints", "format"}
 	knownEndpointFields = []string{"method", "path"}
 )
 

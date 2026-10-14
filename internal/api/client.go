@@ -15,6 +15,7 @@ import (
 	"unicode"
 
 	"github.com/paxel/sanshain-go/v2/internal/utils"
+	"gopkg.in/yaml.v3"
 )
 
 // ProvidePayload is the 2.0 wire payload for POST /provide.
@@ -146,6 +147,10 @@ type RequireBundlePayload struct {
 	DryRun       bool                    `json:"dry_run,omitempty"`
 	Trunk        bool                    `json:"trunk,omitempty"`
 	Tag          string                  `json:"tag,omitempty"`
+	// Format asks for the endpoints in another document format
+	// ("openapi" for an AsyncAPI require). It travels on the query string,
+	// not in the body.
+	Format string `json:"-"`
 }
 
 // Stream names which dependency graph a build's calls belong to: trunk, one
@@ -534,14 +539,16 @@ func (c *SanshainClient) catalogFailure(resp *http.Response, body string) error 
 }
 
 func (c *SanshainClient) Require(consumerName, producerName, version, path, method string, dryRun bool, apiType string) (string, error) {
-	result, err := c.RequireWithEtag(consumerName, producerName, version, path, method, dryRun, apiType, "", Stream{})
+	result, err := c.RequireWithEtag(consumerName, producerName, version, path, method, dryRun, apiType, "", Stream{}, "")
 	if err != nil {
 		return "", err
 	}
 	return result.Content, nil
 }
 
-func (c *SanshainClient) RequireWithEtag(consumerName, producerName, version, reqPath, method string, dryRun bool, apiType string, etag string, stream Stream) (*RequireResult, error) {
+// RequireWithEtag requires one endpoint. A non-empty format ("openapi")
+// asks for the endpoint in that document format.
+func (c *SanshainClient) RequireWithEtag(consumerName, producerName, version, reqPath, method string, dryRun bool, apiType string, etag string, stream Stream, format string) (*RequireResult, error) {
 	endpoint := "/require"
 	if apiType == "asyncapi" {
 		endpoint = "/require/asyncapi"
@@ -569,6 +576,9 @@ func (c *SanshainClient) RequireWithEtag(consumerName, producerName, version, re
 		q.Set("trunk", "true")
 	} else if stream.Tag != "" {
 		q.Set("tag", stream.Tag)
+	}
+	if format != "" {
+		q.Set("format", format)
 	}
 	u.RawQuery = q.Encode()
 
@@ -602,6 +612,10 @@ func (c *SanshainClient) RequireWithEtag(consumerName, producerName, version, re
 		return nil, c.requireFailure(resp, body, producerName, version)
 	}
 
+	if err := c.checkFormat(format, body); err != nil {
+		return nil, err
+	}
+
 	responseEtag := resp.Header.Get("ETag")
 	return &RequireResult{Content: body, Etag: responseEtag, NotModified: false}, nil
 }
@@ -621,7 +635,11 @@ func (c *SanshainClient) RequireBundleWithEtag(payload RequireBundlePayload, com
 		headers.Set("If-None-Match", etag)
 	}
 
-	resp, err := c.send(http.MethodPost, "/require-bundle", payload, compression, headers)
+	path := "/require-bundle"
+	if payload.Format != "" {
+		path += "?" + url.Values{"format": {payload.Format}}.Encode()
+	}
+	resp, err := c.send(http.MethodPost, path, payload, compression, headers)
 	if err != nil {
 		return nil, err
 	}
@@ -639,12 +657,40 @@ func (c *SanshainClient) RequireBundleWithEtag(payload RequireBundlePayload, com
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, c.requireFailure(resp, respBody, payload.ProducerName, payload.Version)
 	}
+	if err := c.checkFormat(payload.Format, respBody); err != nil {
+		return nil, err
+	}
 
 	return &RequireResult{
 		Content:     respBody,
 		Etag:        resp.Header.Get("ETag"),
 		NotModified: false,
 	}, nil
+}
+
+// checkFormat verifies that a require asking for format: openapi got an
+// OpenAPI document. An older service ignores the parameter and answers
+// AsyncAPI, which the lazy GET /version turns into the version it needs.
+func (c *SanshainClient) checkFormat(format, body string) error {
+	if format != "openapi" || isOpenAPI(body) {
+		return nil
+	}
+	server := "server version unknown"
+	if v := c.lazyServerVersion(); v != "" {
+		server = "server is " + v
+	}
+	return fmt.Errorf("format: openapi needs Sanshain Service 2.4.0 or later (%s)", server)
+}
+
+// isOpenAPI reports whether body is a YAML or JSON document with a top-level
+// openapi key.
+func isOpenAPI(body string) bool {
+	var doc map[string]any
+	if err := yaml.Unmarshal([]byte(body), &doc); err != nil {
+		return false
+	}
+	_, ok := doc["openapi"]
+	return ok
 }
 
 func (c *SanshainClient) readBody(resp *http.Response) (string, error) {

@@ -69,10 +69,20 @@ func (c *SanshainCache) UpdateRequireEntry(key, etag string) {
 	}
 }
 
-func RequireKey(producerName, version, method, path string) string {
-	return fmt.Sprintf("%s|%s|%s|%s", producerName, version, method, path)
+// RequireKey keys a single-endpoint require. A requested format is part of
+// the key, so two formats of the same endpoint never share an ETag.
+func RequireKey(producerName, version, method, path, format string) string {
+	return withFormat(fmt.Sprintf("%s|%s|%s|%s", producerName, version, method, path), format)
 }
 
-func RequireBundleKey(producerName, version string) string {
-	return fmt.Sprintf("%s|%s|bundle", producerName, version)
+// RequireBundleKey keys a bundle require, including a requested format.
+func RequireBundleKey(producerName, version, format string) string {
+	return withFormat(fmt.Sprintf("%s|%s|bundle", producerName, version), format)
+}
+
+func withFormat(key, format string) string {
+	if format == "" {
+		return key
+	}
+	return key + "|format=" + format
 }

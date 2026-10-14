@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `catalog` requires Sanshain Service 2.4.0; all other commands work with any 2.x service.
 - The `SANSHAIN_URL` environment variable overrides `sanshainUrl`, which may then be left out of `sanshain.yaml`.
 - Unknown fields in `sanshain.yaml` are named on stderr and ignored; with `strict: true` they fail the command.
+- `format: openapi` on a `requires` entry with `apiType: asyncapi` downloads the endpoints as an OpenAPI document (needs Sanshain Service 2.4.0).
 
 ### Changed
 - Relative paths in `sanshain.yaml` (`file`, `openApiFile`, `asyncApiFile`, `protoFile`, `outputDirectory`) resolve against the directory containing `sanshain.yaml` instead of the working directory.
