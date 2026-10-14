@@ -225,3 +225,48 @@ func TestFormat_EtagKeyedPerFormat(t *testing.T) {
 		t.Errorf("the asyncapi format must not share the openapi ETag, got %q", got)
 	}
 }
+
+// A pre-2.4.0 service refuses the single-endpoint format parameter with 400.
+func TestFormat_OldServerRejectsSingleRouteWith400(t *testing.T) {
+	cases := []struct {
+		name, version, errBody, want string
+	}{
+		{"old server", "2.3.0", "unknown field `format`, expected one of `consumername`", "format: openapi needs Sanshain Service 2.4.0 or later (server is 2.3.0)"},
+		{"version unknown", "", "unknown field `format`", "format: openapi needs Sanshain Service 2.4.0 or later (server version unknown)"},
+		{"current server keeps its message", "2.4.0", "cannot convert channel /orders: Avro payloads are not supported for format", "cannot convert channel /orders: Avro payloads are not supported for format"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/version" {
+					if tc.version == "" {
+						w.WriteHeader(http.StatusNotFound)
+						return
+					}
+					_, _ = w.Write([]byte(`{"version":"` + tc.version + `"}`))
+					return
+				}
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":"` + tc.errBody + `"}`))
+			}))
+			defer ts.Close()
+			cfgPath, dir := formatProject(t, ts.URL, singleEntry)
+
+			stdout, _, code := runMain(t, nil, "--config", cfgPath, "require")
+			if code == 0 || !strings.Contains(stdout, tc.want) {
+				t.Errorf("expected failure %q, got %d %q", tc.want, code, stdout)
+			}
+			if tc.version == "2.4.0" && strings.Contains(stdout, "needs Sanshain Service 2.4.0") {
+				t.Errorf("a 2.4.0 server's 400 must pass through, got %q", stdout)
+			}
+
+			stdout, _, code = runMain(t, nil, "--config", cfgPath, "--best-effort", "require")
+			if code != 0 || !strings.Contains(stdout, "Warning: failed to require events: ") || !strings.Contains(stdout, tc.want) {
+				t.Errorf("expected a best-effort warning with %q, got %d %q", tc.want, code, stdout)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "gen")); !os.IsNotExist(err) {
+				t.Errorf("nothing may be written, got %v", err)
+			}
+		})
+	}
+}

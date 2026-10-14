@@ -609,6 +609,9 @@ func (c *SanshainClient) RequireWithEtag(consumerName, producerName, version, re
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if err := c.formatRejected(format, resp, body); err != nil {
+			return nil, err
+		}
 		return nil, c.requireFailure(resp, body, producerName, version)
 	}
 
@@ -655,6 +658,9 @@ func (c *SanshainClient) RequireBundleWithEtag(payload RequireBundlePayload, com
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if err := c.formatRejected(payload.Format, resp, respBody); err != nil {
+			return nil, err
+		}
 		return nil, c.requireFailure(resp, respBody, payload.ProducerName, payload.Version)
 	}
 	if err := c.checkFormat(payload.Format, respBody); err != nil {
@@ -675,11 +681,54 @@ func (c *SanshainClient) checkFormat(format, body string) error {
 	if format != "openapi" || isOpenAPI(body) {
 		return nil
 	}
+	return c.formatNeedsNewerService()
+}
+
+// formatRejected recognises a pre-2.4.0 service refusing the format query
+// parameter: a 400 whose error mentions "format" from a server older than
+// 2.4.0, or of unknown version. A 2.4.0+ server's 400 is its own message and
+// is left to the normal error mapping (nil).
+func (c *SanshainClient) formatRejected(format string, resp *http.Response, body string) error {
+	if format == "" || resp.StatusCode != http.StatusBadRequest ||
+		!strings.Contains(strings.ToLower(parseErrorBody(body).Error), "format") {
+		return nil
+	}
+	if atLeast(c.lazyServerVersion(), 2, 4, 0) {
+		return nil
+	}
+	return c.formatNeedsNewerService()
+}
+
+func (c *SanshainClient) formatNeedsNewerService() error {
 	server := "server version unknown"
 	if v := c.lazyServerVersion(); v != "" {
 		server = "server is " + v
 	}
 	return fmt.Errorf("format: openapi needs Sanshain Service 2.4.0 or later (%s)", server)
+}
+
+// atLeast reports whether version (MAJOR.MINOR.PATCH, optional leading v) is
+// at least the given one; an unparseable or empty version is not.
+func atLeast(version string, major, minor, patch int) bool {
+	parts := strings.SplitN(strings.TrimPrefix(strings.TrimSpace(version), "v"), ".", 3)
+	want := []int{major, minor, patch}
+	for i, w := range want {
+		if i >= len(parts) {
+			return w == 0
+		}
+		digits := parts[i]
+		if end := strings.IndexFunc(digits, func(r rune) bool { return !unicode.IsDigit(r) }); end >= 0 {
+			digits = digits[:end]
+		}
+		n, err := strconv.Atoi(digits)
+		if err != nil {
+			return false
+		}
+		if n != w {
+			return n > w
+		}
+	}
+	return true
 }
 
 // isOpenAPI reports whether body is a YAML or JSON document with a top-level

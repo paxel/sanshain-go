@@ -206,6 +206,8 @@ requires:
 AsyncAPI; the client detects that and fails with
 `format: openapi needs Sanshain Service 2.4.0 or later (server is <version>)`, writing nothing
 (best-effort turns it into a warning).
+An older service rejects the single-endpoint request or returns AsyncAPI; the client reports
+that it needs 2.4.0.
 
 #### Version
 ```bash

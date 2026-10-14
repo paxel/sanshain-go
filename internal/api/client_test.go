@@ -620,3 +620,15 @@ func TestPushCatalog_400IsRejection(t *testing.T) {
 		t.Errorf("expected a CatalogRejectedError, got %v", err)
 	}
 }
+
+func TestAtLeast(t *testing.T) {
+	cases := map[string]bool{
+		"2.4.0": true, "2.4.1": true, "2.10.0": true, "3.0.0": true, "v2.4.0": true, "2.4.0-rc1": true, "2.4": true,
+		"2.3.9": false, "1.9.0": false, "": false, "unknown": false,
+	}
+	for v, want := range cases {
+		if got := atLeast(v, 2, 4, 0); got != want {
+			t.Errorf("atLeast(%q) = %v, want %v", v, got, want)
+		}
+	}
+}
