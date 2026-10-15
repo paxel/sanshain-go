@@ -63,10 +63,13 @@ func main() {
 	client := api.NewSanshainClient(cfg.SanshainURL, token, *insecure)
 	sc := cache.NewSanshainCache(".")
 
-	stream, err := api.ResolveStream(*trunk, *tag, os.Getenv("SANSHAIN_TRUNK"), os.Getenv("SANSHAIN_TAG"))
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		os.Exit(1)
+	stream, neither := api.ResolveStream(*trunk, *tag, os.Getenv("SANSHAIN_TRUNK"), os.Getenv("SANSHAIN_TAG"))
+	if neither != "" {
+		printWarning(neither)
+		if cfg.Strict {
+			fmt.Printf("Error: strict: %s\n", neither)
+			os.Exit(1)
+		}
 	}
 
 	switch command {
@@ -150,7 +153,7 @@ func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, stabi
 
 	for _, p := range provides {
 		if p.Retired {
-			if err := retireFamily(client, cfg.ServiceName, p.ApiType); err != nil {
+			if err := retireFamily(client, cfg, p.ApiType); err != nil {
 				return err
 			}
 			provided = true
@@ -176,7 +179,7 @@ func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, stabi
 		}
 
 		for _, f := range files {
-			if err := provideFile(client, cfg.ServiceName, f.path, f.apiType, stability, cfg.Compression, stream); err != nil {
+			if err := provideFile(client, cfg, f.path, f.apiType, stability, stream); err != nil {
 				return err
 			}
 			provided = true
@@ -194,7 +197,8 @@ func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, stabi
 	return nil
 }
 
-func provideFile(client *api.SanshainClient, producerName, filePath, apiType, stability string, compression bool, stream api.Stream) error {
+func provideFile(client *api.SanshainClient, cfg *config.SanshainConfig, filePath, apiType, stability string, stream api.Stream) error {
+	producerName, compression := cfg.ServiceName, cfg.Compression
 	/* #nosec G304 */
 	specData, err := os.ReadFile(filePath)
 	if err != nil {
@@ -241,16 +245,16 @@ func provideFile(client *api.SanshainClient, producerName, filePath, apiType, st
 		return fmt.Errorf("unsupported apiType: %s", apiType)
 	}
 
-	if err != nil {
-		var conflict *api.ConflictError
-		if errors.As(err, &conflict) && conflict.ProposedVersion != "" {
-			versionHome := "info.version"
-			if apiType == "proto" || apiType == "grpc" {
-				versionHome = "the // sanshain-version comment"
-			}
-			return fmt.Errorf("%s\n  Publish as %s — update %s in %s and re-run",
-				conflict.Message, conflict.ProposedVersion, versionHome, filePath)
+	var conflict *api.ConflictError
+	if errors.As(err, &conflict) && conflict.ProposedVersion != "" {
+		versionHome := "info.version"
+		if apiType == "proto" || apiType == "grpc" {
+			versionHome = "the // sanshain-version comment"
 		}
+		err = fmt.Errorf("%s\n  Publish as %s — update %s in %s and re-run",
+			conflict.Message, conflict.ProposedVersion, versionHome, filePath)
+	}
+	if err := checkWarnings(cfg.Strict, client.TakeWarnings(), err); err != nil {
 		return err
 	}
 
@@ -277,14 +281,14 @@ func provideFile(client *api.SanshainClient, producerName, filePath, apiType, st
 
 // retireFamily declares that this project no longer provides an API family,
 // because its sanshain.yaml entry says retired: true.
-func retireFamily(client *api.SanshainClient, producerName, apiType string) error {
+func retireFamily(client *api.SanshainClient, cfg *config.SanshainConfig, apiType string) error {
 	family := apiType
 	if family == "" {
 		family = "openapi"
 	}
-	fmt.Printf("Retiring %s for %s...\n", family, producerName)
-	shed, err := client.Retire(producerName, family, false)
-	if err != nil {
+	fmt.Printf("Retiring %s for %s...\n", family, cfg.ServiceName)
+	shed, err := client.Retire(cfg.ServiceName, family, false)
+	if err := checkWarnings(cfg.Strict, client.TakeWarnings(), err); err != nil {
 		return err
 	}
 	line := "✓ Retired"
@@ -317,6 +321,7 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 		fmt.Printf("Requiring %s@%s from %s...\n", req.ServiceName, req.Version, cfg.SanshainURL)
 
 		var result *api.RequireResult
+		var reqErr error
 		var cacheKey string
 		var fileName string
 
@@ -329,11 +334,7 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 				cachedEtag = cachedEntry.Etag
 			}
 
-			var reqErr error
 			result, reqErr = client.RequireWithEtag(cfg.ServiceName, req.ServiceName, req.Version, endpoint.Path, endpoint.Method, false, req.ApiType, cachedEtag, stream, req.Format)
-			if reqErr != nil {
-				return fmt.Errorf("failed to require %s: %w", req.ServiceName, reqErr)
-			}
 
 			ext := getExtension(req.ApiType)
 			fileName = req.ServiceName + "." + ext
@@ -360,14 +361,17 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 					Method: e.Method,
 				})
 			}
-			var reqErr error
 			result, reqErr = client.RequireBundleWithEtag(payload, cfg.Compression, cachedEtag)
-			if reqErr != nil {
-				return fmt.Errorf("failed to require %s: %w", req.ServiceName, reqErr)
-			}
 
 			ext := getExtension(req.ApiType)
 			fileName = req.ServiceName + "_bundle." + ext
+		}
+
+		if reqErr != nil {
+			reqErr = fmt.Errorf("failed to require %s: %w", req.ServiceName, reqErr)
+		}
+		if err := checkWarnings(cfg.Strict, client.TakeWarnings(), reqErr); err != nil {
+			return err
 		}
 
 		if result.NotModified {
@@ -402,14 +406,36 @@ func getExtension(apiType string) string {
 	return "yaml"
 }
 
-// configError is a strict configuration failure. Best-effort softens failed
-// calls, never these.
+// configError is a strict failure: a strict configuration failure, or a
+// warning strict mode turns into a failure. Best-effort softens failed calls,
+// never these.
 type configError struct {
 	msg string
 }
 
 func (e *configError) Error() string {
 	return e.msg
+}
+
+// printWarning prints one warning in this client's warning style.
+func printWarning(text string) {
+	fmt.Printf("⚠ %s\n", text)
+}
+
+// checkWarnings prints each warning Sanshain sent with a call, then hands
+// back the call's error — unless strict mode turns the first warning into a
+// failure, which beats both the error (printed first) and best-effort.
+func checkWarnings(strict bool, warnings []string, err error) error {
+	for _, w := range warnings {
+		printWarning(w)
+	}
+	if !strict || len(warnings) == 0 {
+		return err
+	}
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+	}
+	return &configError{"strict: Sanshain warned: " + warnings[0]}
 }
 
 // handleCatalog pushes the catalogInfo file so Sanshain records the system's
@@ -438,13 +464,16 @@ func handleCatalog(client *api.SanshainClient, cfg *config.SanshainConfig, strea
 
 	fmt.Printf("Pushing catalog %s for %s to %s...\n", cfg.CatalogInfo, cfg.ServiceName, client.BaseURL)
 	resp, err := client.PushCatalog(cfg.ServiceName, string(content), stream.Trunk, cfg.Compression)
-	if err != nil {
-		var rejected *api.CatalogRejectedError
-		if errors.As(err, &rejected) {
-			return fmt.Errorf("Sanshain rejected %s: %s. The Component's metadata.name must equal serviceName '%s'.",
-				cfg.CatalogInfo, rejected.Message, cfg.ServiceName)
-		}
+	warnings := client.TakeWarnings()
+	// The header names the reason; a service sending none still warns.
+	if err == nil && !resp.Recorded && len(warnings) == 0 {
+		warnings = append(warnings, "Sanshain did not record "+cfg.CatalogInfo)
+	}
+	if err := checkWarnings(cfg.Strict, warnings, err); err != nil {
 		return err
+	}
+	if !resp.Recorded {
+		return nil
 	}
 
 	graphs := "dev"

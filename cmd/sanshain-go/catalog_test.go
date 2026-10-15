@@ -124,17 +124,13 @@ func TestCatalog_RecordedOutput(t *testing.T) {
 	}
 }
 
-func TestCatalog_Rejected400(t *testing.T) {
+// A 400 can only come from a service that predates the Sanshain-Warning
+// header: it gets the generic error mapping.
+func TestCatalog_400UsesNormalMapping(t *testing.T) {
 	cs := newCatalogServer(t, http.StatusBadRequest, `{"error":"no Component named 'orders service'"}`, "2.4.0")
-	cfgPath := catalogProject(t, cs.URL, withCatalog)
-	stdout, _, code := runMain(t, nil, "--config", cfgPath, "catalog")
-	if code == 0 {
-		t.Fatal("expected a 400 to fail")
-	}
-	file := filepath.Join(filepath.Dir(cfgPath), "backstage", "catalog-info.yaml")
-	want := "Sanshain rejected " + file + ": no Component named 'orders service'. The Component's metadata.name must equal serviceName 'orders service'."
-	if !strings.Contains(stdout, want) {
-		t.Errorf("expected %q, got %q", want, stdout)
+	stdout, _, code := runMain(t, nil, "--config", catalogProject(t, cs.URL, withCatalog), "catalog")
+	if code == 0 || !strings.Contains(stdout, "Error: request failed with status 400") {
+		t.Errorf("expected the normal error mapping, got %d %q", code, stdout)
 	}
 }
 
@@ -144,7 +140,7 @@ func TestCatalog_BestEffortTurns400IntoWarning(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected exit 0 under best-effort, got %d", code)
 	}
-	if !strings.Contains(stdout, "Warning: Sanshain rejected") {
+	if !strings.Contains(stdout, "Warning: request failed with status 400") {
 		t.Errorf("expected a warning, got %q", stdout)
 	}
 }

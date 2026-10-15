@@ -28,7 +28,7 @@ type ProvidePayload struct {
 	DryRun       bool   `json:"dry_run,omitempty"`
 	// The stream this build belongs to (ADR-0004/0005). Omitted when
 	// undeclared — the server defaults trunk to false and treats an absent
-	// tag as "no branch". Mutually exclusive; the server answers 400 for both.
+	// tag as "no branch". Mutually exclusive: ResolveStream never sends both.
 	Trunk bool   `json:"trunk,omitempty"`
 	Tag   string `json:"tag,omitempty"`
 }
@@ -166,22 +166,24 @@ type Stream struct {
 	Tag   string
 }
 
+// TrunkAndTagWarning is what ResolveStream reports for a build declaring both
+// trunk and a tag.
+const TrunkAndTagWarning = "trunk and tag are mutually exclusive - this build is recorded in neither"
+
 // ResolveStream resolves the declared stream from an explicit flag pair and
 // the SANSHAIN_TRUNK / SANSHAIN_TAG environment, preferring the flags. A build
-// declaring both trunk and a tag is refused here — the server would answer 400,
-// and naming the misconfiguration locally beats spending a round trip on it.
-func ResolveStream(trunkFlag bool, tagFlag, trunkEnv, tagEnv string) (Stream, error) {
+// declaring both trunk and a tag is no error — the graph never fails a build —
+// but is recorded in neither: it gets the zero Stream and TrunkAndTagWarning.
+func ResolveStream(trunkFlag bool, tagFlag, trunkEnv, tagEnv string) (Stream, string) {
 	trunk := trunkFlag || utils.IsOn(trunkEnv)
 	tag := strings.TrimSpace(tagFlag)
 	if tag == "" {
 		tag = strings.TrimSpace(tagEnv)
 	}
 	if trunk && tag != "" {
-		return Stream{}, fmt.Errorf(
-			"this build declares both trunk and tag '%s' — a build belongs to the trunk stream or to one sanshain-branch, never both; set only one of --trunk / SANSHAIN_TRUNK and --tag / SANSHAIN_TAG",
-			tag)
+		return Stream{}, TrunkAndTagWarning
 	}
-	return Stream{Trunk: trunk, Tag: tag}, nil
+	return Stream{Trunk: trunk, Tag: tag}, ""
 }
 
 // ConflictError is a 409 rejection by the server's version rules.
@@ -220,6 +222,29 @@ type SanshainClient struct {
 
 	serverChecked bool
 	serverVersion string
+
+	// warnings are the Sanshain-Warning header lines received since the
+	// last TakeWarnings.
+	warnings []string
+}
+
+// TakeWarnings returns the Sanshain-Warning header lines received since the
+// last call, in order, and forgets them.
+func (c *SanshainClient) TakeWarnings() []string {
+	w := c.warnings
+	c.warnings = nil
+	return w
+}
+
+// do sends req and collects the response's Sanshain-Warning header lines
+// whatever the status — one warning per header line, never split on commas.
+func (c *SanshainClient) do(req *http.Request) (*http.Response, error) {
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	c.warnings = append(c.warnings, resp.Header.Values("Sanshain-Warning")...)
+	return resp, nil
 }
 
 func NewSanshainClient(baseURL, token string, insecure bool) *SanshainClient {
@@ -443,7 +468,7 @@ func (c *SanshainClient) send(method, path string, payload any, compression bool
 		req.Header.Set("Authorization", "Bearer "+c.Token)
 	}
 
-	return c.HTTPClient.Do(req)
+	return c.do(req)
 }
 
 func (c *SanshainClient) postProvide(path string, payload any, compression bool) (*ProvideResponse, error) {
@@ -478,20 +503,13 @@ type CatalogPushPayload struct {
 }
 
 // CatalogPushResponse is the periphery the server now records for a system.
+// Recorded is false when Sanshain could not read the file as the system's
+// Component: nothing was recorded, and a Sanshain-Warning header names why.
 type CatalogPushResponse struct {
 	System    string   `json:"system"`
 	Trunk     bool     `json:"trunk"`
 	Resources []string `json:"resources"`
-}
-
-// CatalogRejectedError is a 400 on a catalog push: Sanshain could not read
-// the file as the system's Component.
-type CatalogRejectedError struct {
-	Message string
-}
-
-func (e *CatalogRejectedError) Error() string {
-	return e.Message
+	Recorded  bool     `json:"recorded"`
 }
 
 // PushCatalog sends the system's Backstage catalog-info.yaml. It needs
@@ -512,20 +530,18 @@ func (c *SanshainClient) PushCatalog(systemName, catalogInfoYaml string, trunk, 
 		return nil, c.catalogFailure(resp, body)
 	}
 
-	var result CatalogPushResponse
+	// An older 2.4.0 pre-release service sends no recorded field: it counts
+	// as recorded.
+	result := CatalogPushResponse{Recorded: true}
 	if err := json.Unmarshal([]byte(body), &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
-// catalogFailure keeps the 400 rejection distinct and turns a 404 into the
-// service version the command needs.
+// catalogFailure turns a 404 into the service version the command needs.
 func (c *SanshainClient) catalogFailure(resp *http.Response, body string) error {
-	switch resp.StatusCode {
-	case http.StatusBadRequest:
-		return &CatalogRejectedError{Message: parseErrorBody(body).Error}
-	case http.StatusNotFound:
+	if resp.StatusCode == http.StatusNotFound {
 		server := "server version unknown"
 		if v := c.lazyServerVersion(); v != "" {
 			server = "server is " + v
@@ -593,7 +609,7 @@ func (c *SanshainClient) RequireWithEtag(consumerName, producerName, version, re
 		req.Header.Set("If-None-Match", etag)
 	}
 
-	resp, err := c.HTTPClient.Do(req)
+	resp, err := c.do(req)
 	if err != nil {
 		return nil, err
 	}

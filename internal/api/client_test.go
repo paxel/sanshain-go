@@ -312,9 +312,9 @@ func TestSanshainClient_NoDiagnosisWhenServerIs2x(t *testing.T) {
 // --- 2.2: streams, retire, harvested subscriptions, line endings ---
 
 func TestResolveStream_DefaultsAndPrecedence(t *testing.T) {
-	s, err := ResolveStream(false, "", "", "")
-	if err != nil || s.Trunk || s.Tag != "" {
-		t.Fatalf("undeclared stream must be the zero value, got %+v, %v", s, err)
+	s, warning := ResolveStream(false, "", "", "")
+	if warning != "" || s.Trunk || s.Tag != "" {
+		t.Fatalf("undeclared stream must be the zero value, got %+v, %q", s, warning)
 	}
 	s, _ = ResolveStream(false, "", "true", "")
 	if !s.Trunk {
@@ -330,13 +330,11 @@ func TestResolveStream_DefaultsAndPrecedence(t *testing.T) {
 	}
 }
 
-// The server answers 400 for a call carrying both; catching it locally names
-// the misconfiguration instead of the status code.
 func TestResolveStream_TrunkEnvSwitchSpellings(t *testing.T) {
 	for value, want := range map[string]bool{"1": true, "TRUE": true, " true ": true, "yes": false, "false": false} {
-		s, err := ResolveStream(false, "", value, "")
-		if err != nil {
-			t.Fatalf("SANSHAIN_TRUNK=%q: unexpected error %v", value, err)
+		s, warning := ResolveStream(false, "", value, "")
+		if warning != "" {
+			t.Fatalf("SANSHAIN_TRUNK=%q: unexpected warning %q", value, warning)
 		}
 		if s.Trunk != want {
 			t.Errorf("SANSHAIN_TRUNK=%q: trunk = %v, want %v", value, s.Trunk, want)
@@ -344,14 +342,17 @@ func TestResolveStream_TrunkEnvSwitchSpellings(t *testing.T) {
 	}
 }
 
-func TestResolveStream_RefusesTrunkAndTagTogether(t *testing.T) {
-	if _, err := ResolveStream(true, "R", "", ""); err == nil {
-		t.Fatal("trunk and tag together must be refused")
-	} else if !strings.Contains(err.Error(), "never both") || !strings.Contains(err.Error(), "R") {
-		t.Errorf("the refusal names the collision and the tag, got: %v", err)
-	}
-	if _, err := ResolveStream(true, "", "", "R"); err == nil {
-		t.Error("the collision must be caught across sources too")
+// Trunk and a tag together is no error: the build is recorded in neither.
+func TestResolveStream_TrunkAndTagRecordsNeither(t *testing.T) {
+	want := "trunk and tag are mutually exclusive - this build is recorded in neither"
+	for _, args := range [][4]string{{"true", "R", "", ""}, {"true", "", "", "R"}, {"", "R", "1", ""}} {
+		s, warning := ResolveStream(args[0] == "true", args[1], args[2], args[3])
+		if warning != want {
+			t.Errorf("%v: expected %q, got %q", args, want, warning)
+		}
+		if s != (Stream{}) {
+			t.Errorf("%v: neither stream may be sent, got %+v", args, s)
+		}
 	}
 }
 
@@ -607,17 +608,96 @@ func TestPushCatalog_PutsCompressedPayload(t *testing.T) {
 	}
 }
 
-func TestPushCatalog_400IsRejection(t *testing.T) {
+// A 400 can only come from a service that predates the warning: it gets the
+// generic error mapping.
+func TestPushCatalog_400IsGenericFailure(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/version" {
+			_, _ = w.Write([]byte(`{"version":"2.4.0"}`))
+			return
+		}
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"error":"no Component named 'svc'"}`))
 	}))
 	defer ts.Close()
 
 	_, err := NewSanshainClient(ts.URL, "", false).PushCatalog("svc", "x", false, false)
-	var rejected *CatalogRejectedError
-	if !errors.As(err, &rejected) || rejected.Message != "no Component named 'svc'" {
-		t.Errorf("expected a CatalogRejectedError, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "request failed with status 400") {
+		t.Errorf("expected the generic 400 mapping, got %v", err)
+	}
+}
+
+func TestPushCatalog_Recorded(t *testing.T) {
+	cases := map[string]bool{
+		`{"system":"s","trunk":false,"resources":[],"recorded":false}`:   false,
+		`{"system":"s","trunk":false,"resources":["r"],"recorded":true}`: true,
+		// An older 2.4.0 pre-release service sends no recorded field.
+		`{"system":"s","trunk":false,"resources":["r"]}`: true,
+	}
+	for body, want := range cases {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(body))
+		}))
+		resp, err := NewSanshainClient(ts.URL, "", false).PushCatalog("s", "x", false, false)
+		ts.Close()
+		if err != nil || resp.Recorded != want {
+			t.Errorf("%s: expected recorded=%v, got %+v, %v", body, want, resp, err)
+		}
+	}
+}
+
+// warningServer answers every call with status and two Sanshain-Warning
+// header lines, the first containing a comma.
+func warningServer(t *testing.T, status int, body string) *httptest.Server {
+	t.Helper()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/version" {
+			_, _ = w.Write([]byte(`{"version":"2.4.0"}`))
+			return
+		}
+		w.Header().Add("Sanshain-Warning", "first, with a comma")
+		w.Header().Add("Sanshain-Warning", "second")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+func TestTakeWarnings_EveryCallEveryStatus(t *testing.T) {
+	calls := map[string]func(*SanshainClient){
+		"provide": func(c *SanshainClient) {
+			_, _ = c.Provide(ProvidePayload{ProducerName: "p", OpenApiYaml: "x", Stability: "snapshot"}, false)
+		},
+		"provide asyncapi": func(c *SanshainClient) {
+			_, _ = c.ProvideAsyncApi(ProvideAsyncApiPayload{ProducerName: "p", AsyncApiYaml: "x", Stability: "snapshot"}, false)
+		},
+		"provide grpc": func(c *SanshainClient) {
+			_, _ = c.ProvideProto(ProvideProtoPayload{ProducerName: "p", ProtoContent: "x", Stability: "snapshot"}, false)
+		},
+		"retire":  func(c *SanshainClient) { _, _ = c.Retire("p", "openapi", false) },
+		"require": func(c *SanshainClient) { _, _ = c.Require("c", "p", "1.0.0", "/x", "GET", false, "") },
+		"require etag": func(c *SanshainClient) {
+			_, _ = c.RequireWithEtag("c", "p", "1.0.0", "/x", "GET", false, "", "\"e\"", Stream{}, "")
+		},
+		"bundle": func(c *SanshainClient) {
+			_, _ = c.RequireBundle(RequireBundlePayload{ConsumerName: "c", ProducerName: "p", Version: "1.0.0"}, false)
+		},
+		"catalog": func(c *SanshainClient) { _, _ = c.PushCatalog("s", "x", false, false) },
+	}
+	for _, status := range []int{http.StatusOK, http.StatusNotModified, http.StatusBadRequest} {
+		ts := warningServer(t, status, `{"system":"s","recorded":false}`)
+		for name, call := range calls {
+			c := NewSanshainClient(ts.URL, "", false)
+			call(c)
+			got := c.TakeWarnings()
+			if len(got) != 2 || got[0] != "first, with a comma" || got[1] != "second" {
+				t.Errorf("%s (%d): expected both header lines unsplit, got %q", name, status, got)
+			}
+			if again := c.TakeWarnings(); len(again) != 0 {
+				t.Errorf("%s (%d): TakeWarnings must forget what it returned, got %q", name, status, again)
+			}
+		}
 	}
 }
 

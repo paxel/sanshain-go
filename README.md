@@ -96,8 +96,11 @@ sanshain-go --tag R1 provide     # release/hotfix pipeline: updates that sanshai
 ```
 
 The same flags apply to `require` — trunk pins feed the main graph. Declaring
-both fails before any request is sent; an unknown tag answers `404` (a releaser
-must create the branch first).
+both records the build in neither graph: it prints
+`⚠ trunk and tag are mutually exclusive - this build is recorded in neither` and
+sends neither (strict mode fails before any request). An unknown tag is recorded
+in no release graph — the call succeeds and Sanshain warns (see [Warnings](#warnings));
+a releaser must create the branch first.
 
 #### Retiring a protocol
 
@@ -166,7 +169,8 @@ service. Against an older service the command fails with
     resource:default/orders-bucket
   ```
 - Sanshain reads only the `Component` whose `metadata.name` equals `serviceName`. If it cannot
-  (usually a name mismatch), the command fails with `Sanshain rejected <file>: ...`.
+  (usually a name mismatch), it records nothing and keeps the previous periphery: the command
+  prints Sanshain's reason as a warning and exits 0 (fails under strict mode).
 - Without `catalogInfo` the command warns and exits 0; with `strict: true` it fails. Strict here
   checks only `serviceName` and `catalogInfo`.
 - With best-effort (`--best-effort` / `SANSHAIN_BEST_EFFORT`), a missing file or a failed call
@@ -269,6 +273,22 @@ When strict mode is enabled:
 - No `provides` configured → exit with error
 - No `requires` configured → exit with error
 - No `catalogInfo` configured (for `catalog`, which checks only `serviceName` and `catalogInfo`) → exit with error
+- Any warning Sanshain sends with a response → exit with `strict: Sanshain warned: <text>`, also under best-effort
+- Both trunk and a tag declared → exit with error before any request
+
+## Warnings
+
+The dependency graph is informational and never fails a build. Where Sanshain does not record a
+call in a graph — an unknown `--tag`, a `catalog-info.yaml` it cannot read — the call succeeds and
+Sanshain sends a `Sanshain-Warning` header. Each one is printed as `⚠ <text>`, one line per
+warning, and the build carries on:
+
+```
+⚠ no sanshain-branch 'R9' - this build was not recorded in a release graph
+```
+
+Under strict mode a warning fails the command right after the call, with
+`strict: Sanshain warned: <text>` (the first warning); best-effort does not soften that.
 
 ## Unknown Fields
 
