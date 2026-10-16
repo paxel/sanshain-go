@@ -15,7 +15,7 @@ import (
 
 // version is the client's own version. sanshain-go 2.x speaks the
 // Sanshain Service 2.x wire contract.
-const version = "2.2.0"
+const version = "2.3.0"
 
 func main() {
 	configPath := flag.String("config", "sanshain.yaml", "path to sanshain.yaml")
