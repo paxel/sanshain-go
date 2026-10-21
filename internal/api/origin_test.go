@@ -2,7 +2,11 @@ package api
 
 import (
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -80,5 +84,31 @@ func TestOrigin_IsFlattenedIntoEveryProvidePayload(t *testing.T) {
 		if _, ok := m["build_url"]; ok {
 			t.Errorf("unset build_url must be omitted: %s", b)
 		}
+	}
+}
+
+// A service before 2.9.0 refuses the origin by name: the provide is repeated
+// without it instead of failing the build.
+func TestProvide_RepeatsWithoutTheOriginWhenAnOldServerRefusesIt(t *testing.T) {
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(b))
+		if strings.Contains(string(b), `"note"`) {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_, _ = w.Write([]byte("Failed to deserialize the JSON body into the target type: unknown field `note`"))
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"version":"1.0.0","stability":"snapshot","content_hash":"h","changes":{}}`))
+	}))
+	defer srv.Close()
+	c := NewSanshainClient(srv.URL, "", false)
+	resp, err := c.Provide(ProvidePayload{ProducerName: "p", OpenApiYaml: "x", Stability: "snapshot", Origin: Origin{Note: "why"}}, false)
+	if err != nil || resp == nil || resp.Version != "1.0.0" {
+		t.Fatalf("want the repeated provide to succeed, got %v, %v", resp, err)
+	}
+	if len(bodies) != 2 || strings.Contains(bodies[1], "note") {
+		t.Fatalf("want a second request without the origin, got %q", bodies)
 	}
 }

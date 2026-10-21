@@ -6,10 +6,12 @@ import (
 	"compress/gzip"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"unicode"
@@ -268,15 +270,52 @@ func NewSanshainClient(baseURL, token string, insecure bool) *SanshainClient {
 }
 
 func (c *SanshainClient) Provide(payload ProvidePayload, compression bool) (*ProvideResponse, error) {
-	return c.postProvide("/provide", payload, compression)
+	resp, err := c.postProvide("/provide", payload, compression)
+	if errors.Is(err, errOriginRefused) && !payload.Origin.IsZero() {
+		warnOriginDropped()
+		payload.Origin = Origin{}
+		return c.postProvide("/provide", payload, compression)
+	}
+	return resp, err
+}
+
+// errOriginRefused is a 422 naming an origin field as unknown: the service
+// predates the origin (before 2.9.0). The provide itself must not fail for a
+// fact the service cannot store, so the caller repeats it without the origin.
+var errOriginRefused = errors.New("the service does not take the build's origin")
+
+// originFieldRefused reports whether a 422 body names an origin field as unknown.
+func originFieldRefused(body string) bool {
+	for _, field := range []string{"build_url", "change_url", "tickets", "note"} {
+		if strings.Contains(body, "unknown field `"+field+"`") {
+			return true
+		}
+	}
+	return false
+}
+
+func warnOriginDropped() {
+	fmt.Fprintln(os.Stderr, "⚠ Sanshain Service before 2.9.0 does not take the build's origin; providing without it")
 }
 
 func (c *SanshainClient) ProvideAsyncApi(payload ProvideAsyncApiPayload, compression bool) (*ProvideResponse, error) {
-	return c.postProvide("/provide/asyncapi", payload, compression)
+	resp, err := c.postProvide("/provide/asyncapi", payload, compression)
+	if errors.Is(err, errOriginRefused) && !payload.Origin.IsZero() {
+		warnOriginDropped()
+		payload.Origin = Origin{}
+		return c.postProvide("/provide/asyncapi", payload, compression)
+	}
+	return resp, err
 }
 
 func (c *SanshainClient) ProvideProto(payload ProvideProtoPayload, compression bool) (*ProvideResponse, error) {
-	return c.postProvide("/provide/grpc", payload, compression)
+	resp, err := c.postProvide("/provide/grpc", payload, compression)
+	if errors.Is(err, errOriginRefused) && !payload.Origin.IsZero() {
+		warnOriginDropped()
+		payload.Origin = Origin{}
+		return c.postProvide("/provide/grpc", payload, compression)
+	}
+	return resp, err
 }
 
 // Retire declares that the Producer no longer provides the given API family.
@@ -487,6 +526,9 @@ func (c *SanshainClient) postProvide(path string, payload any, compression bool)
 		return nil, err
 	}
 
+	if resp.StatusCode == http.StatusUnprocessableEntity && originFieldRefused(respBody) {
+		return nil, errOriginRefused
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, c.provideFailure(resp, respBody)
 	}
