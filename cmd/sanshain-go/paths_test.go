@@ -69,7 +69,7 @@ requires:
 	}
 	client := api.NewSanshainClient(ts.URL, "", false)
 
-	if err := handleProvide(client, cfg, "snapshot", api.Stream{}); err != nil {
+	if err := handleProvide(client, cfg, "snapshot", api.Stream{}, api.Origin{}); err != nil {
 		t.Fatalf("provide failed: %v", err)
 	}
 	if provided != "openapi: next-to-config" {

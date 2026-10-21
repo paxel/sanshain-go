@@ -31,6 +31,8 @@ type ProvidePayload struct {
 	// tag as "no branch". Mutually exclusive: ResolveStream never sends both.
 	Trunk bool   `json:"trunk,omitempty"`
 	Tag   string `json:"tag,omitempty"`
+	// Why this build provides; flattened, each field omitted when unset.
+	Origin
 }
 
 type ProvideAsyncApiPayload struct {
@@ -40,6 +42,7 @@ type ProvideAsyncApiPayload struct {
 	DryRun       bool   `json:"dry_run,omitempty"`
 	Trunk        bool   `json:"trunk,omitempty"`
 	Tag          string `json:"tag,omitempty"`
+	Origin
 }
 
 type ProvideProtoPayload struct {
@@ -49,6 +52,7 @@ type ProvideProtoPayload struct {
 	DryRun       bool   `json:"dry_run,omitempty"`
 	Trunk        bool   `json:"trunk,omitempty"`
 	Tag          string `json:"tag,omitempty"`
+	Origin
 }
 
 // RetirePayload declares that the Producer no longer provides an API family —

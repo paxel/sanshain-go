@@ -102,6 +102,26 @@ sends neither (strict mode fails before any request). An unknown tag is recorded
 in no release graph — the call succeeds and Sanshain warns (see [Warnings](#warnings));
 a releaser must create the branch first.
 
+#### Origin: why this build provides
+
+A provide may carry what the pipeline knows about *why* it runs (Sanshain Service 2.9.0 and
+later). Sanshain stores it with the version and shows it on the version row, in the diff and the
+blame:
+
+```bash
+sanshain-go --tickets ORD-7,ORD-9 --note "Adds the users endpoint" provide
+```
+
+- `--build-url` / `SANSHAIN_BUILD_URL` and `--change-url` / `SANSHAIN_CHANGE_URL` (the pull or
+  merge request) default to the runner's own variables on GitHub Actions (`GITHUB_SERVER_URL`,
+  `GITHUB_REPOSITORY`, `GITHUB_RUN_ID`, a pull request's `GITHUB_REF`), GitLab CI (`CI_JOB_URL`,
+  `CI_MERGE_REQUEST_PROJECT_URL`, `CI_MERGE_REQUEST_IID`) and Jenkins (`BUILD_URL`, `CHANGE_URL`).
+- `--tickets` / `SANSHAIN_TICKETS` (comma-separated ids) and `--note` / `SANSHAIN_NOTE` come only
+  from the pipeline.
+
+The latest provide that carries any of it wins; a byte-identical re-provide only fills an empty
+origin. Nothing is read from git.
+
 #### Retiring a protocol
 
 Removing a `provides` entry tells Sanshain nothing — it cannot distinguish a

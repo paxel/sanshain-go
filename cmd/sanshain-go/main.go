@@ -24,6 +24,10 @@ func main() {
 	ga := flag.Bool("ga", false, "provide as immutable 'ga' instead of the default 'snapshot' (also: SANSHAIN_GA=true or 1)")
 	trunk := flag.Bool("trunk", false, "this build is trunk's: it maintains the main graph (also: SANSHAIN_TRUNK=true or 1)")
 	tag := flag.String("tag", "", "this build belongs to a sanshain-branch — release/hotfix pipelines (also: SANSHAIN_TAG)")
+	buildURL := flag.String("build-url", "", "where this build ran (also: SANSHAIN_BUILD_URL; default: the runner's own variable)")
+	changeURL := flag.String("change-url", "", "the pull or merge request behind this build (also: SANSHAIN_CHANGE_URL; default: the runner's own variable)")
+	tickets := flag.String("tickets", "", "ticket ids this build closes, comma-separated (also: SANSHAIN_TICKETS)")
+	note := flag.String("note", "", "one line of intent for this provide (also: SANSHAIN_NOTE)")
 	showVersion := flag.Bool("version", false, "print the client version and exit")
 	flag.Parse()
 
@@ -74,7 +78,8 @@ func main() {
 
 	switch command {
 	case "provide":
-		err = handleProvide(client, cfg, resolveStability(*ga), stream)
+		origin := api.ResolveOrigin(*buildURL, *changeURL, *tickets, *note, os.Getenv)
+		err = handleProvide(client, cfg, resolveStability(*ga), stream, origin)
 	case "require":
 		err = handleRequire(client, cfg, sc, stream)
 	case "catalog":
@@ -127,7 +132,7 @@ func usage() {
 	flag.PrintDefaults()
 }
 
-func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, stability string, stream api.Stream) error {
+func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, stability string, stream api.Stream, origin api.Origin) error {
 	if cfg.ServiceName == "" {
 		if cfg.Strict {
 			return fmt.Errorf("serviceName is required (in sanshain.yaml or via environment)")
@@ -179,7 +184,7 @@ func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, stabi
 		}
 
 		for _, f := range files {
-			if err := provideFile(client, cfg, f.path, f.apiType, stability, stream); err != nil {
+			if err := provideFile(client, cfg, f.path, f.apiType, stability, stream, origin); err != nil {
 				return err
 			}
 			provided = true
@@ -197,7 +202,7 @@ func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, stabi
 	return nil
 }
 
-func provideFile(client *api.SanshainClient, cfg *config.SanshainConfig, filePath, apiType, stability string, stream api.Stream) error {
+func provideFile(client *api.SanshainClient, cfg *config.SanshainConfig, filePath, apiType, stability string, stream api.Stream, origin api.Origin) error {
 	producerName, compression := cfg.ServiceName, cfg.Compression
 	/* #nosec G304 */
 	specData, err := os.ReadFile(filePath)
@@ -218,6 +223,7 @@ func provideFile(client *api.SanshainClient, cfg *config.SanshainConfig, filePat
 			Stability:    stability,
 			Trunk:        stream.Trunk,
 			Tag:          stream.Tag,
+			Origin:       origin,
 		}
 		fmt.Printf("Providing OpenAPI %s (stability: %s) to %s...\n", producerName, stability, client.BaseURL)
 		resp, err = client.Provide(payload, compression)
@@ -228,6 +234,7 @@ func provideFile(client *api.SanshainClient, cfg *config.SanshainConfig, filePat
 			Stability:    stability,
 			Trunk:        stream.Trunk,
 			Tag:          stream.Tag,
+			Origin:       origin,
 		}
 		fmt.Printf("Providing AsyncAPI %s (stability: %s) to %s...\n", producerName, stability, client.BaseURL)
 		resp, err = client.ProvideAsyncApi(payload, compression)
@@ -238,6 +245,7 @@ func provideFile(client *api.SanshainClient, cfg *config.SanshainConfig, filePat
 			Stability:    stability,
 			Trunk:        stream.Trunk,
 			Tag:          stream.Tag,
+			Origin:       origin,
 		}
 		fmt.Printf("Providing Proto %s (stability: %s) to %s...\n", producerName, stability, client.BaseURL)
 		resp, err = client.ProvideProto(payload, compression)
