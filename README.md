@@ -1,6 +1,13 @@
 # sanshain-go
 
-A Go-based CLI tool and client for the [Sanshain Service](https://github.com/paxel/sanshain). It allows Go microservices to provide their API specifications and download version-pinned API dependencies during build time, following the same patterns as the Sanshain Maven and JavaScript clients.
+[![Build and Test](https://github.com/paxel/sanshain-go/actions/workflows/build.yml/badge.svg?branch=summer)](https://github.com/paxel/sanshain-go/actions/workflows/build.yml)
+[![Security](https://github.com/paxel/sanshain-go/actions/workflows/security.yml/badge.svg?branch=summer)](https://github.com/paxel/sanshain-go/actions/workflows/security.yml)
+[![Release](https://img.shields.io/github/v/release/paxel/sanshain-go)](https://github.com/paxel/sanshain-go/releases/latest)
+[![Go Reference](https://pkg.go.dev/badge/github.com/paxel/sanshain-go/v2.svg)](https://pkg.go.dev/github.com/paxel/sanshain-go/v2)
+[![Go version](https://img.shields.io/github/go-mod/go-version/paxel/sanshain-go)](https://github.com/paxel/sanshain-go/blob/summer/go.mod)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](https://github.com/paxel/sanshain-go/blob/summer/LICENSE)
+
+A Go-based CLI tool and client for the [Sanshain Service](https://github.com/paxel/sanshain-service). It allows Go microservices to provide their API specifications and download version-pinned API dependencies during build time, following the same patterns as the Sanshain Maven and JavaScript clients.
 
 **Compatibility: client 2.x speaks Sanshain Service 2.x.** The 2.0 release is a clean break from the 1.x branch model — there is no dual-mode operation. Against a pre-2.0 server the client fails with a clear "upgrade the server" message.
 
