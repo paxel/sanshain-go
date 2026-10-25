@@ -3,6 +3,11 @@
 This file contains historical changelog entries for sanshain-go.
 For recent changes, see [CHANGELOG.md](CHANGELOG.md).
 
+## [2.3.0] - 2026-10-21
+
+### Added
+- `provide` sends the origin of the build: `--build-url` and `--change-url` default to the runner's own variables on GitHub Actions, GitLab CI and Jenkins (overridden by `SANSHAIN_BUILD_URL` / `SANSHAIN_CHANGE_URL`), plus `--tickets` / `SANSHAIN_TICKETS` and `--note` / `SANSHAIN_NOTE`. Sanshain Service 2.9.0 and later stores it with the version and shows it as "why".
+
 ## [2.2.0] - 2026-10-16
 
 ### Added

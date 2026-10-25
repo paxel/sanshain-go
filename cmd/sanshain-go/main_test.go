@@ -76,7 +76,7 @@ func TestResolveBestEffort(t *testing.T) {
 
 func TestMain_VersionFlag(t *testing.T) {
 	stdout, _, code := runMain(t, nil, "--version")
-	if code != 0 || stdout != "sanshain-go 2.3.0\n" {
-		t.Errorf("expected 'sanshain-go 2.3.0', got %d %q", code, stdout)
+	if code != 0 || stdout != "sanshain-go 2.4.0\n" {
+		t.Errorf("expected 'sanshain-go 2.4.0', got %d %q", code, stdout)
 	}
 }
