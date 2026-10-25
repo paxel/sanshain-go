@@ -37,6 +37,7 @@ jobs:
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v3
         with:
+          body_path: CHANGELOG.md
           files: |
             dist/sanshain-go-linux-amd64
             dist/sanshain-go-linux-arm64
