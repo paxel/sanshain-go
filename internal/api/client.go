@@ -17,7 +17,7 @@ import (
 	"unicode"
 
 	"github.com/paxel/sanshain-go/v2/internal/utils"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // ProvidePayload is the 2.0 wire payload for POST /provide.
