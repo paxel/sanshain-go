@@ -1,0 +1,17 @@
+version: "2"
+
+linters:
+  settings:
+    staticcheck:
+      checks:
+        - all
+        # The defaults golangci-lint switches off.
+        - -ST1000
+        - -ST1003
+        - -ST1016
+        - -ST1020
+        - -ST1021
+        - -ST1022
+        # Error messages start with the product name ("Sanshain server at …"),
+        # word for word the same in every Sanshain client.
+        - -ST1005

@@ -271,7 +271,7 @@ func NewSanshainClient(baseURL, token string, insecure bool) *SanshainClient {
 
 func (c *SanshainClient) Provide(payload ProvidePayload, compression bool) (*ProvideResponse, error) {
 	resp, err := c.postProvide("/provide", payload, compression)
-	if errors.Is(err, errOriginRefused) && !payload.Origin.IsZero() {
+	if errors.Is(err, errOriginRefused) && !payload.IsZero() {
 		warnOriginDropped()
 		payload.Origin = Origin{}
 		return c.postProvide("/provide", payload, compression)
@@ -300,7 +300,7 @@ func warnOriginDropped() {
 
 func (c *SanshainClient) ProvideAsyncApi(payload ProvideAsyncApiPayload, compression bool) (*ProvideResponse, error) {
 	resp, err := c.postProvide("/provide/asyncapi", payload, compression)
-	if errors.Is(err, errOriginRefused) && !payload.Origin.IsZero() {
+	if errors.Is(err, errOriginRefused) && !payload.IsZero() {
 		warnOriginDropped()
 		payload.Origin = Origin{}
 		return c.postProvide("/provide/asyncapi", payload, compression)
@@ -310,7 +310,7 @@ func (c *SanshainClient) ProvideAsyncApi(payload ProvideAsyncApiPayload, compres
 
 func (c *SanshainClient) ProvideProto(payload ProvideProtoPayload, compression bool) (*ProvideResponse, error) {
 	resp, err := c.postProvide("/provide/grpc", payload, compression)
-	if errors.Is(err, errOriginRefused) && !payload.Origin.IsZero() {
+	if errors.Is(err, errOriginRefused) && !payload.IsZero() {
 		warnOriginDropped()
 		payload.Origin = Origin{}
 		return c.postProvide("/provide/grpc", payload, compression)
@@ -324,9 +324,10 @@ func (c *SanshainClient) ProvideProto(payload ProvideProtoPayload, compression b
 // Producer, or the server answers 403.
 func (c *SanshainClient) Retire(producerName, apiType string, dryRun bool) (*RetiredProtocol, error) {
 	path := "/provide"
-	if apiType == "asyncapi" {
+	switch apiType {
+	case "asyncapi":
 		path = "/provide/asyncapi"
-	} else if apiType == "proto" || apiType == "grpc" {
+	case "proto", "grpc":
 		path = "/provide/grpc"
 	}
 
@@ -334,7 +335,7 @@ func (c *SanshainClient) Retire(producerName, apiType string, dryRun bool) (*Ret
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := c.readBody(resp)
 	if err != nil {
@@ -362,7 +363,7 @@ func (c *SanshainClient) GetServerVersion() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := c.readBody(resp)
 	if err != nil {
@@ -519,7 +520,7 @@ func (c *SanshainClient) postProvide(path string, payload any, compression bool)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := c.readBody(resp)
 	if err != nil {
@@ -566,7 +567,7 @@ func (c *SanshainClient) PushCatalog(systemName, catalogInfoYaml string, trunk, 
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := c.readBody(resp)
 	if err != nil {
@@ -612,9 +613,10 @@ func (c *SanshainClient) Require(consumerName, producerName, version, path, meth
 // asks for the endpoint in that document format.
 func (c *SanshainClient) RequireWithEtag(consumerName, producerName, version, reqPath, method string, dryRun bool, apiType string, etag string, stream Stream, format string) (*RequireResult, error) {
 	endpoint := "/require"
-	if apiType == "asyncapi" {
+	switch apiType {
+	case "asyncapi":
 		endpoint = "/require/asyncapi"
-	} else if apiType == "proto" {
+	case "proto":
 		endpoint = "/require/grpc"
 	}
 
@@ -659,7 +661,7 @@ func (c *SanshainClient) RequireWithEtag(consumerName, producerName, version, re
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotModified {
 		return &RequireResult{NotModified: true}, nil
@@ -708,7 +710,7 @@ func (c *SanshainClient) RequireBundleWithEtag(payload RequireBundlePayload, com
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotModified {
 		return &RequireResult{NotModified: true}, nil
@@ -814,7 +816,7 @@ func (c *SanshainClient) readBody(resp *http.Response) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		defer reader.Close()
+		defer func() { _ = reader.Close() }()
 	} else {
 		reader = resp.Body
 	}

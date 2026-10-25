@@ -216,7 +216,8 @@ func provideFile(client *api.SanshainClient, cfg *config.SanshainConfig, filePat
 
 	var resp *api.ProvideResponse
 
-	if apiType == "" || apiType == "openapi" {
+	switch apiType {
+	case "", "openapi":
 		payload := api.ProvidePayload{
 			ProducerName: producerName,
 			OpenApiYaml:  content,
@@ -227,7 +228,7 @@ func provideFile(client *api.SanshainClient, cfg *config.SanshainConfig, filePat
 		}
 		fmt.Printf("Providing OpenAPI %s (stability: %s) to %s...\n", producerName, stability, client.BaseURL)
 		resp, err = client.Provide(payload, compression)
-	} else if apiType == "asyncapi" {
+	case "asyncapi":
 		payload := api.ProvideAsyncApiPayload{
 			ProducerName: producerName,
 			AsyncApiYaml: content,
@@ -238,7 +239,7 @@ func provideFile(client *api.SanshainClient, cfg *config.SanshainConfig, filePat
 		}
 		fmt.Printf("Providing AsyncAPI %s (stability: %s) to %s...\n", producerName, stability, client.BaseURL)
 		resp, err = client.ProvideAsyncApi(payload, compression)
-	} else if apiType == "proto" || apiType == "grpc" {
+	case "proto", "grpc":
 		payload := api.ProvideProtoPayload{
 			ProducerName: producerName,
 			ProtoContent: content,
@@ -249,7 +250,7 @@ func provideFile(client *api.SanshainClient, cfg *config.SanshainConfig, filePat
 		}
 		fmt.Printf("Providing Proto %s (stability: %s) to %s...\n", producerName, stability, client.BaseURL)
 		resp, err = client.ProvideProto(payload, compression)
-	} else {
+	default:
 		return fmt.Errorf("unsupported apiType: %s", apiType)
 	}
 
