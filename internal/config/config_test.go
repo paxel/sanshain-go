@@ -555,3 +555,28 @@ func TestLoadConfig_MalformedAnnotation(t *testing.T) {
 		}
 	}
 }
+
+// An unknown apiType is a configuration error at load, on a provide and on a
+// require alike; every accepted spelling loads.
+func TestLoadConfig_UnknownApiType(t *testing.T) {
+	entry := func(provideType, requireType string) string {
+		return "sanshainUrl: http://localhost:3000\nserviceName: svc\nprovides:\n  - file: api.yaml\n    apiType: " + provideType +
+			"\nrequires:\n  - serviceName: users\n    apiType: " + requireType +
+			"\n    version: 1.0.0\n    outputDirectory: gen\n    endpoints:\n      - method: GET\n        path: /x\n"
+	}
+	for _, apiType := range []string{"openapi", "asyncapi", "proto", "grpc"} {
+		if _, err := LoadConfig(writeConfig(t, entry(apiType, apiType)), io.Discard); err != nil {
+			t.Errorf("apiType %s must load, got %v", apiType, err)
+		}
+	}
+	cases := map[string]string{
+		"provide[0]: unsupported apiType: raml":          entry("raml", "openapi"),
+		"requires[0] (users): unsupported apiType: raml": entry("openapi", "raml"),
+	}
+	for want, yaml := range cases {
+		_, err := LoadConfig(writeConfig(t, yaml), io.Discard)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("expected %q, got %v", want, err)
+		}
+	}
+}

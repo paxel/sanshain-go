@@ -19,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Best effort softens failed calls only, the same in provide, require and catalog: an unreadable or invalid `sanshain.yaml` (1.x fields and an unsupported provide `apiType` included) and missing configuration under strict now fail also with best effort, and a failed provide or require no longer stops the next entry.
 - A `403` on provide or retire names the releaser role only when the service refused for want of it; any other `403`, such as a read-only token's, shows the service's message alone.
 - The require ETag cache in `.sanshain-cache.json` is kept per output directory: the same endpoint required into two directories is written to both instead of the second getting a `304` and staying empty, and a deleted output file is fetched again instead of being skipped.
+- An unknown `requires[].apiType` fails as a configuration error when `sanshain.yaml` is loaded, as an unknown provide `apiType` does; it was sent to `/require` as OpenAPI.
 
 ---
 

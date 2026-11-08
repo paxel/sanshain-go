@@ -213,8 +213,8 @@ func checkSectionFields(section string, m map[string]any) error {
 	return nil
 }
 
-// apiTypes are the apiType spellings a provide takes; empty means openapi,
-// grpc means proto.
+// apiTypes are the apiType spellings a provide and a require take; empty
+// means openapi, grpc means proto.
 var apiTypes = []string{"", "openapi", "asyncapi", "proto", "grpc"}
 
 func validateConfig(config *SanshainConfig) error {
@@ -260,6 +260,9 @@ func validateConfig(config *SanshainConfig) error {
 			return fmt.Errorf(
 				"requires[%d] (%s): missing 'version' — Sanshain 2.0 pins exact versions; add version: 1.2.0 (list available: GET /producers/%s/versions)",
 				i, req.ServiceName, req.ServiceName)
+		}
+		if !slices.Contains(apiTypes, req.ApiType) {
+			return fmt.Errorf("requires[%d] (%s): unsupported apiType: %s — use openapi, asyncapi or proto (grpc means proto)", i, req.ServiceName, req.ApiType)
 		}
 		if req.Format != "" && (req.Format != "openapi" || req.ApiType != "asyncapi") {
 			return fmt.Errorf(
