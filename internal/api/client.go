@@ -450,11 +450,22 @@ func (c *SanshainClient) provideFailure(resp *http.Response, body string) error 
 	// remedy is a role grant — nothing the Producer can change in its own
 	// repository. Naming it is the whole value of catching this status.
 	if resp.StatusCode == http.StatusForbidden {
+		if !namesReleaserRole(eb.Error) {
+			return fmt.Errorf("provide refused (403): %s", eb.Error)
+		}
 		return fmt.Errorf(
 			"provide refused (403): %s\n  Publishing a GA version requires the 'releaser' role. Grant it to the user or token this build authenticates as (administrators and root always hold it), or publish as a snapshot by leaving --ga / SANSHAIN_GA unset and autoGa off (or setting SANSHAIN_GA=false)",
 			eb.Error)
 	}
 	return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, sanitize(body))
+}
+
+// namesReleaserRole reports whether a 403 is the service's refusal for a
+// caller without the releaser role. Its body carries no code, only the
+// sentence ("… requires the 'releaser' role …"); every other 403, a read-only
+// token's among them, is shown as the service wrote it.
+func namesReleaserRole(message string) bool {
+	return strings.Contains(message, "requires the 'releaser' role")
 }
 
 // retireFailure names both ways into the retire gate — the releaser role a
@@ -466,6 +477,9 @@ func (c *SanshainClient) retireFailure(resp *http.Response, body, producerName s
 	eb := parseErrorBody(body)
 	switch resp.StatusCode {
 	case http.StatusForbidden:
+		if !namesReleaserRole(eb.Error) {
+			return fmt.Errorf("retire refused (403): %s", eb.Error)
+		}
 		return fmt.Errorf(
 			"retire refused (403): %s\n  Retiring an API family requires the 'releaser' role — which a release pipeline already holds — or a maintainer grant on '%s'. Administrators and root hold both",
 			eb.Error, producerName)

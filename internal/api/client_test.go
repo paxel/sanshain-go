@@ -525,6 +525,32 @@ func TestProvide_ForbiddenNamesTheReleaserRole(t *testing.T) {
 	}
 }
 
+const readOnlyRefusal = "this API token has scope 'read_only' and may not change the catalog; create a token with scope 'full' for provide, require and catalog pushes"
+
+// Only the releaser refusal gets the releaser hint; any other 403, a
+// read-only token's among them, shows the service's message alone.
+func TestForbidden_WithoutTheReleaserReasonShowsTheServiceMessageOnly(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/version" {
+			serveVersion(w, "2.13.0")
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":"` + readOnlyRefusal + `"}`))
+	}))
+	defer ts.Close()
+	client := NewSanshainClient(ts.URL, "", false)
+
+	_, err := client.Provide(ProvidePayload{ProducerName: "svc", OpenApiYaml: "x", Stability: "snapshot"}, false)
+	if err == nil || err.Error() != "provide refused (403): "+readOnlyRefusal {
+		t.Errorf("expected the service's message alone, got: %v", err)
+	}
+	_, err = client.Retire("svc", "openapi", false)
+	if err == nil || err.Error() != "retire refused (403): "+readOnlyRefusal {
+		t.Errorf("expected the service's message alone, got: %v", err)
+	}
+}
+
 func TestHarvestedSubscriptions_ParseAndClassify(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
