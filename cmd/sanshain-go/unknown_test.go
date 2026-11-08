@@ -61,21 +61,21 @@ func TestMain_LegacyFieldStillErrorsBeforeCat(t *testing.T) {
 	}
 }
 
-// A config that fails validation falls back to an empty config under
-// best-effort, and the cat still names the typo.
-func TestMain_BestEffortFallbackStillShowsCat(t *testing.T) {
+// A config that fails validation fails also under best-effort, and the cat
+// still names the typo first.
+func TestMain_BestEffortInvalidConfigStillShowsCat(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "sanshain.yaml")
 	writeFile(t, cfgPath, "sanshainUrll: http://127.0.0.1:1\nserviceName: svc\n")
 
 	stdout, stderr, code := runMain(t, nil, "--config", cfgPath, "--best-effort", "require")
-	if code != 0 {
-		t.Fatalf("expected exit 0 under best-effort, got %d: %s", code, stdout)
+	if code == 0 {
+		t.Fatalf("expected an invalid config to fail under best-effort: %s", stdout)
 	}
 	if !strings.Contains(stderr, "sanshain.yaml: unknown field 'sanshainUrll' - ignored") {
 		t.Errorf("expected the cat on stderr, got %q", stderr)
 	}
-	if !strings.Contains(stdout, "Warning loading config: missing required field: sanshainUrl") {
-		t.Errorf("expected the config warning after the cat, got %q", stdout)
+	if !strings.Contains(stdout, "Error loading config: missing required field: sanshainUrl") {
+		t.Errorf("expected the config error after the cat, got %q", stdout)
 	}
 }
 

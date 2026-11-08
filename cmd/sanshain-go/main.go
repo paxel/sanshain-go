@@ -46,22 +46,16 @@ func main() {
 
 	command := flag.Arg(0)
 
+	// A broken sanshain.yaml is a configuration error: best effort softens
+	// failed calls only, never this.
 	cfg, err := config.LoadConfig(*configPath, os.Stderr)
 	if err != nil {
-		// A strict rejection of unknown fields is a config error: best-effort
-		// does not soften it.
 		if errors.Is(err, config.ErrUnknownFieldsStrict) {
 			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
-		}
-		// Even if config fails to load, check best effort from flags/env
-		if resolveBestEffort(*bestEffort, false) {
-			fmt.Printf("Warning loading config: %v\n", err)
-			cfg = &config.SanshainConfig{} // dummy config
 		} else {
 			fmt.Printf("Error loading config: %v\n", err)
-			os.Exit(1)
 		}
+		os.Exit(1)
 	}
 
 	cfg.BestEffort = resolveBestEffort(*bestEffort, cfg.BestEffort)
@@ -104,15 +98,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err != nil {
-		var cfgErr *configError
-		if cfg.BestEffort && !errors.As(err, &cfgErr) {
-			fmt.Printf("Warning: %v\n", err)
-			return
-		}
+	if err := soften(cfg.BestEffort, err); err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// soften reports a failed call as a warning under best effort and returns
+// nil, so the build goes on; a configError, or any error without best
+// effort, is handed back.
+func soften(bestEffort bool, err error) error {
+	var cfgErr *configError
+	if err == nil || !bestEffort || errors.As(err, &cfgErr) {
+		return err
+	}
+	fmt.Printf("Warning: %v\n", err)
+	return nil
 }
 
 // resolveStability decides a provide's stability; the first of these that
@@ -212,7 +213,7 @@ func usage() {
 func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, stability string, stream api.Stream, origin api.Origin, annotations []api.Annotation) error {
 	if cfg.ServiceName == "" {
 		if cfg.Strict {
-			return fmt.Errorf("serviceName is required (in sanshain.yaml or via environment)")
+			return &configError{"serviceName is required (in sanshain.yaml or via environment)"}
 		}
 		fmt.Println("⚠ No serviceName configured. Skipping provide. Set strict: true to fail in this case.")
 		return nil
@@ -225,20 +226,24 @@ func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, stabi
 
 	if len(provides) == 0 {
 		if cfg.Strict {
-			return fmt.Errorf("no provide configuration found in sanshain.yaml")
+			return &configError{"no provide configuration found in sanshain.yaml"}
 		}
 		fmt.Println("⚠ No provide configuration found in sanshain.yaml. Skipping. Set strict: true to fail in this case.")
 		return nil
 	}
 
-	provided := false
+	provided, failed := false, false
 
+	// Each entry stands alone under best effort: a failed call does not keep
+	// the next entry from being provided.
 	for _, p := range provides {
 		if p.Retired {
-			if err := retireFamily(client, cfg, p.ApiType); err != nil {
+			provided = true
+			err := retireFamily(client, cfg, p.ApiType)
+			failed = failed || err != nil
+			if err := soften(cfg.BestEffort, err); err != nil {
 				return err
 			}
-			provided = true
 			continue
 		}
 		type fileInfo struct {
@@ -261,19 +266,21 @@ func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, stabi
 		}
 
 		for _, f := range files {
-			if err := provideFile(client, cfg, f.path, f.apiType, stability, stream, origin, annotations); err != nil {
+			provided = true
+			err := provideFile(client, cfg, f.path, f.apiType, stability, stream, origin, annotations)
+			failed = failed || err != nil
+			if err := soften(cfg.BestEffort, err); err != nil {
 				return err
 			}
-			provided = true
 		}
 	}
 
 	if !provided {
 		if cfg.Strict {
-			return fmt.Errorf("no specification files found to provide")
+			return &configError{"no specification files found to provide"}
 		}
 		fmt.Println("⚠ No specification files found to provide. Skipping. Set strict: true to fail in this case.")
-	} else {
+	} else if !failed {
 		fmt.Println("Successfully provided spec(s).")
 	}
 	return nil
@@ -394,7 +401,7 @@ func retireFamily(client *api.SanshainClient, cfg *config.SanshainConfig, apiTyp
 func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *cache.SanshainCache, stream api.Stream, annotations []api.Annotation) error {
 	if cfg.ServiceName == "" {
 		if cfg.Strict {
-			return fmt.Errorf("serviceName is required (in sanshain.yaml or via environment)")
+			return &configError{"serviceName is required (in sanshain.yaml or via environment)"}
 		}
 		fmt.Println("⚠ No serviceName configured. Skipping require. Set strict: true to fail in this case.")
 		return nil
@@ -402,91 +409,103 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 
 	if len(cfg.Requires) == 0 {
 		if cfg.Strict {
-			return fmt.Errorf("no requires configured in sanshain.yaml")
+			return &configError{"no requires configured in sanshain.yaml"}
 		}
 		fmt.Println("⚠ No requires configured in sanshain.yaml. Skipping. Set strict: true to fail in this case.")
 		return nil
 	}
 
+	// Each entry stands alone under best effort: a failed call does not keep
+	// the next entry from being downloaded.
 	for _, req := range cfg.Requires {
-		fmt.Printf("Requiring %s@%s from %s...\n", req.ServiceName, req.Version, cfg.SanshainURL)
-		apiType := requireApiType(req.ApiType)
-
-		var result *api.RequireResult
-		var reqErr error
-		var cacheKey string
-		var fileName string
-
-		if len(req.Endpoints) == 1 {
-			endpoint := req.Endpoints[0]
-			cacheKey = cache.RequireKey(req.ServiceName, req.Version, endpoint.Method, endpoint.Path, req.Format)
-			cachedEntry := sc.GetRequireEntry(cacheKey)
-			cachedEtag := ""
-			if cachedEntry != nil {
-				cachedEtag = cachedEntry.Etag
-			}
-
-			result, reqErr = client.RequireWithEtag(cfg.ServiceName, req.ServiceName, req.Version, endpoint.Path, endpoint.Method, false, apiType, cachedEtag, stream, req.Format, annotations)
-
-			ext := getExtension(apiType)
-			fileName = req.ServiceName + "." + ext
-		} else {
-			cacheKey = cache.RequireBundleKey(req.ServiceName, req.Version, req.Format)
-			cachedEntry := sc.GetRequireEntry(cacheKey)
-			cachedEtag := ""
-			if cachedEntry != nil {
-				cachedEtag = cachedEntry.Etag
-			}
-
-			payload := api.RequireBundlePayload{
-				ConsumerName: cfg.ServiceName,
-				ProducerName: req.ServiceName,
-				Version:      req.Version,
-				ApiType:      apiType,
-				Trunk:        stream.Trunk,
-				Tag:          stream.Tag,
-				Format:       req.Format,
-				Annotations:  annotations,
-			}
-			for _, e := range req.Endpoints {
-				payload.Endpoints = append(payload.Endpoints, api.RequireBundleEndpoint{
-					Path:   e.Path,
-					Method: e.Method,
-				})
-			}
-			result, reqErr = client.RequireBundleWithEtag(payload, cfg.Compression, cachedEtag)
-
-			ext := getExtension(apiType)
-			fileName = req.ServiceName + "_bundle." + ext
-		}
-
-		if reqErr != nil {
-			reqErr = fmt.Errorf("failed to require %s: %w", req.ServiceName, reqErr)
-		}
-		if err := checkWarnings(cfg.Strict, client.TakeWarnings(), reqErr); err != nil {
+		if err := soften(cfg.BestEffort, requireEntry(client, cfg, sc, stream, annotations, req)); err != nil {
 			return err
 		}
+	}
 
-		if result.NotModified {
-			fmt.Printf("⏭ %s spec unchanged (304), skipping code generation.\n", req.ServiceName)
-			continue
+	return nil
+}
+
+// requireEntry downloads one requires entry and writes it to its output
+// directory.
+func requireEntry(client *api.SanshainClient, cfg *config.SanshainConfig, sc *cache.SanshainCache, stream api.Stream, annotations []api.Annotation, req config.RequireConfig) error {
+	fmt.Printf("Requiring %s@%s from %s...\n", req.ServiceName, req.Version, cfg.SanshainURL)
+	apiType := requireApiType(req.ApiType)
+
+	var result *api.RequireResult
+	var reqErr error
+	var cacheKey string
+	var fileName string
+
+	if len(req.Endpoints) == 1 {
+		endpoint := req.Endpoints[0]
+		cacheKey = cache.RequireKey(req.ServiceName, req.Version, endpoint.Method, endpoint.Path, req.Format)
+		cachedEntry := sc.GetRequireEntry(cacheKey)
+		cachedEtag := ""
+		if cachedEntry != nil {
+			cachedEtag = cachedEntry.Etag
 		}
 
-		if err := os.MkdirAll(req.OutputDirectory, 0750); err != nil {
-			return fmt.Errorf("failed to create output directory %s: %w", req.OutputDirectory, err)
+		result, reqErr = client.RequireWithEtag(cfg.ServiceName, req.ServiceName, req.Version, endpoint.Path, endpoint.Method, false, apiType, cachedEtag, stream, req.Format, annotations)
+
+		ext := getExtension(apiType)
+		fileName = req.ServiceName + "." + ext
+	} else {
+		cacheKey = cache.RequireBundleKey(req.ServiceName, req.Version, req.Format)
+		cachedEntry := sc.GetRequireEntry(cacheKey)
+		cachedEtag := ""
+		if cachedEntry != nil {
+			cachedEtag = cachedEntry.Etag
 		}
 
-		outputPath := filepath.Join(req.OutputDirectory, filepath.Clean(fileName))
-		/* #nosec G306 G703 */
-		if err := os.WriteFile(outputPath, []byte(result.Content), 0600); err != nil {
-			return fmt.Errorf("failed to write output file %s: %w", outputPath, err)
+		payload := api.RequireBundlePayload{
+			ConsumerName: cfg.ServiceName,
+			ProducerName: req.ServiceName,
+			Version:      req.Version,
+			ApiType:      apiType,
+			Trunk:        stream.Trunk,
+			Tag:          stream.Tag,
+			Format:       req.Format,
+			Annotations:  annotations,
 		}
-		fmt.Printf("Saved %s to %s\n", fileName, req.OutputDirectory)
+		for _, e := range req.Endpoints {
+			payload.Endpoints = append(payload.Endpoints, api.RequireBundleEndpoint{
+				Path:   e.Path,
+				Method: e.Method,
+			})
+		}
+		result, reqErr = client.RequireBundleWithEtag(payload, cfg.Compression, cachedEtag)
 
-		if result.Etag != "" {
-			sc.UpdateRequireEntry(cacheKey, result.Etag)
-			_ = sc.Save()
-		}
+		ext := getExtension(apiType)
+		fileName = req.ServiceName + "_bundle." + ext
+	}
+
+	if reqErr != nil {
+		reqErr = fmt.Errorf("failed to require %s: %w", req.ServiceName, reqErr)
+	}
+	if err := checkWarnings(cfg.Strict, client.TakeWarnings(), reqErr); err != nil {
+		return err
+	}
+
+	if result.NotModified {
+		fmt.Printf("⏭ %s spec unchanged (304), skipping code generation.\n", req.ServiceName)
+		return nil
+	}
+
+	if err := os.MkdirAll(req.OutputDirectory, 0750); err != nil {
+		return fmt.Errorf("failed to create output directory %s: %w", req.OutputDirectory, err)
+	}
+
+	outputPath := filepath.Join(req.OutputDirectory, filepath.Clean(fileName))
+	/* #nosec G306 G703 */
+	if err := os.WriteFile(outputPath, []byte(result.Content), 0600); err != nil {
+		return fmt.Errorf("failed to write output file %s: %w", outputPath, err)
+	}
+	fmt.Printf("Saved %s to %s\n", fileName, req.OutputDirectory)
+
+	if result.Etag != "" {
+		sc.UpdateRequireEntry(cacheKey, result.Etag)
+		_ = sc.Save()
 	}
 
 	return nil

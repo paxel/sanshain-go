@@ -213,6 +213,10 @@ func checkSectionFields(section string, m map[string]any) error {
 	return nil
 }
 
+// apiTypes are the apiType spellings a provide takes; empty means openapi,
+// grpc means proto.
+var apiTypes = []string{"", "openapi", "asyncapi", "proto", "grpc"}
+
 func validateConfig(config *SanshainConfig) error {
 	if config.SanshainURL == "" {
 		return fmt.Errorf("missing required field: sanshainUrl")
@@ -222,6 +226,9 @@ func validateConfig(config *SanshainConfig) error {
 	}
 
 	validateProvide := func(p *ProvideConfig, i int) error {
+		if !slices.Contains(apiTypes, p.ApiType) {
+			return fmt.Errorf("provide[%d]: unsupported apiType: %s — use openapi, asyncapi or proto (grpc means proto)", i, p.ApiType)
+		}
 		if p.Retired {
 			// A retire names its family via apiType alone; a file may stay
 			// configured (the spec often still exists on disk) but is unused.
