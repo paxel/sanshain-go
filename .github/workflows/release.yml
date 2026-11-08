@@ -14,13 +14,13 @@ jobs:
       pull-requests: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # The binaries are built with the current Go, so they carry its standard
       # library fixes; the floor for `go install` stays the go.mod directive,
       # which the build workflow tests.
       - name: Set up Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 'stable'
           cache: true
@@ -35,7 +35,7 @@ jobs:
           GOOS=windows GOARCH=amd64 go build -o dist/sanshain-go-windows-amd64.exe ./cmd/sanshain-go
 
       - name: Upload Release Assets
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           body_path: CHANGELOG.md
           files: |
