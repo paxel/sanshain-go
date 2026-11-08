@@ -439,24 +439,15 @@ func requireEntry(client *api.SanshainClient, cfg *config.SanshainConfig, sc *ca
 
 	if len(req.Endpoints) == 1 {
 		endpoint := req.Endpoints[0]
-		cacheKey = cache.RequireKey(req.ServiceName, req.Version, endpoint.Method, endpoint.Path, req.Format)
-		cachedEntry := sc.GetRequireEntry(cacheKey)
-		cachedEtag := ""
-		if cachedEntry != nil {
-			cachedEtag = cachedEntry.Etag
-		}
+		fileName = req.ServiceName + "." + getExtension(apiType)
+		cacheKey = cache.RequireKey(req.ServiceName, req.Version, endpoint.Method, endpoint.Path, req.Format, req.OutputDirectory)
+		cachedEtag := cachedEtag(sc, cacheKey, filepath.Join(req.OutputDirectory, fileName))
 
 		result, reqErr = client.RequireWithEtag(cfg.ServiceName, req.ServiceName, req.Version, endpoint.Path, endpoint.Method, false, apiType, cachedEtag, stream, req.Format, annotations)
-
-		ext := getExtension(apiType)
-		fileName = req.ServiceName + "." + ext
 	} else {
-		cacheKey = cache.RequireBundleKey(req.ServiceName, req.Version, req.Format)
-		cachedEntry := sc.GetRequireEntry(cacheKey)
-		cachedEtag := ""
-		if cachedEntry != nil {
-			cachedEtag = cachedEntry.Etag
-		}
+		fileName = req.ServiceName + "_bundle." + getExtension(apiType)
+		cacheKey = cache.RequireBundleKey(req.ServiceName, req.Version, req.Format, req.OutputDirectory)
+		cachedEtag := cachedEtag(sc, cacheKey, filepath.Join(req.OutputDirectory, fileName))
 
 		payload := api.RequireBundlePayload{
 			ConsumerName: cfg.ServiceName,
@@ -475,9 +466,6 @@ func requireEntry(client *api.SanshainClient, cfg *config.SanshainConfig, sc *ca
 			})
 		}
 		result, reqErr = client.RequireBundleWithEtag(payload, cfg.Compression, cachedEtag)
-
-		ext := getExtension(apiType)
-		fileName = req.ServiceName + "_bundle." + ext
 	}
 
 	if reqErr != nil {
@@ -509,6 +497,20 @@ func requireEntry(client *api.SanshainClient, cfg *config.SanshainConfig, sc *ca
 	}
 
 	return nil
+}
+
+// cachedEtag is the ETag to send as If-None-Match: none when the output file
+// is gone, so the answer is a 200 that writes it again instead of a 304 that
+// would leave the directory without it.
+func cachedEtag(sc *cache.SanshainCache, cacheKey, outputFile string) string {
+	entry := sc.GetRequireEntry(cacheKey)
+	if entry == nil {
+		return ""
+	}
+	if _, err := os.Stat(outputFile); err != nil {
+		return ""
+	}
+	return entry.Etag
 }
 
 // requireApiType is a require's apiType as the service's routes and bundle

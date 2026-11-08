@@ -69,15 +69,17 @@ func (c *SanshainCache) UpdateRequireEntry(key, etag string) {
 	}
 }
 
-// RequireKey keys a single-endpoint require. A requested format is part of
-// the key, so two formats of the same endpoint never share an ETag.
-func RequireKey(producerName, version, method, path, format string) string {
-	return withFormat(fmt.Sprintf("%s|%s|%s|%s", producerName, version, method, path), format)
+// RequireKey keys a single-endpoint require. A requested format and the
+// output directory are part of the key, so two formats of the same endpoint,
+// or two directories it is written to, never share an ETag.
+func RequireKey(producerName, version, method, path, format, outputDir string) string {
+	return withOutput(withFormat(fmt.Sprintf("%s|%s|%s|%s", producerName, version, method, path), format), outputDir)
 }
 
-// RequireBundleKey keys a bundle require, including a requested format.
-func RequireBundleKey(producerName, version, format string) string {
-	return withFormat(fmt.Sprintf("%s|%s|bundle", producerName, version), format)
+// RequireBundleKey keys a bundle require, including a requested format and
+// the output directory.
+func RequireBundleKey(producerName, version, format, outputDir string) string {
+	return withOutput(withFormat(fmt.Sprintf("%s|%s|bundle", producerName, version), format), outputDir)
 }
 
 func withFormat(key, format string) string {
@@ -85,4 +87,8 @@ func withFormat(key, format string) string {
 		return key
 	}
 	return key + "|format=" + format
+}
+
+func withOutput(key, outputDir string) string {
+	return key + "|out=" + filepath.ToSlash(filepath.Clean(outputDir))
 }
