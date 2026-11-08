@@ -402,7 +402,7 @@ func TestRequireWithEtag_StreamRidesTheQuery(t *testing.T) {
 	defer ts.Close()
 	client := NewSanshainClient(ts.URL, "", false)
 
-	_, err := client.RequireWithEtag("c", "p", "1.0.0", "/x", "GET", false, "", "", Stream{Trunk: true}, "")
+	_, err := client.RequireWithEtag("c", "p", "1.0.0", "/x", "GET", false, "", "", Stream{Trunk: true}, "", nil)
 	if err != nil {
 		t.Fatalf("require failed: %v", err)
 	}
@@ -410,12 +410,12 @@ func TestRequireWithEtag_StreamRidesTheQuery(t *testing.T) {
 		t.Errorf("trunk must ride the query on the single require, got %v", gotQuery)
 	}
 
-	_, _ = client.RequireWithEtag("c", "p", "1.0.0", "/x", "GET", false, "", "", Stream{Tag: "R"}, "")
+	_, _ = client.RequireWithEtag("c", "p", "1.0.0", "/x", "GET", false, "", "", Stream{Tag: "R"}, "", nil)
 	if got := gotQuery["tag"]; len(got) != 1 || got[0] != "R" {
 		t.Errorf("tag must ride the query, got %v", gotQuery)
 	}
 
-	_, _ = client.RequireWithEtag("c", "p", "1.0.0", "/x", "GET", false, "", "", Stream{}, "")
+	_, _ = client.RequireWithEtag("c", "p", "1.0.0", "/x", "GET", false, "", "", Stream{}, "", nil)
 	if _, present := gotQuery["trunk"]; present {
 		t.Error("an undeclared stream must not send trunk")
 	}
@@ -588,7 +588,7 @@ func TestPushCatalog_PutsCompressedPayload(t *testing.T) {
 	defer ts.Close()
 
 	client := NewSanshainClient(ts.URL, "tok", false)
-	resp, err := client.PushCatalog("a/b", "kind: Component", false, true)
+	resp, err := client.PushCatalog("a/b", "kind: Component", false, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -622,7 +622,7 @@ func TestPushCatalog_400IsGenericFailure(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	_, err := NewSanshainClient(ts.URL, "", false).PushCatalog("svc", "x", false, false)
+	_, err := NewSanshainClient(ts.URL, "", false).PushCatalog("svc", "x", false, false, nil)
 	if err == nil || !strings.Contains(err.Error(), "request failed with status 400") {
 		t.Errorf("expected the generic 400 mapping, got %v", err)
 	}
@@ -639,7 +639,7 @@ func TestPushCatalog_Recorded(t *testing.T) {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write([]byte(body))
 		}))
-		resp, err := NewSanshainClient(ts.URL, "", false).PushCatalog("s", "x", false, false)
+		resp, err := NewSanshainClient(ts.URL, "", false).PushCatalog("s", "x", false, false, nil)
 		ts.Close()
 		if err != nil || resp.Recorded != want {
 			t.Errorf("%s: expected recorded=%v, got %+v, %v", body, want, resp, err)
@@ -679,12 +679,12 @@ func TestTakeWarnings_EveryCallEveryStatus(t *testing.T) {
 		"retire":  func(c *SanshainClient) { _, _ = c.Retire("p", "openapi", false) },
 		"require": func(c *SanshainClient) { _, _ = c.Require("c", "p", "1.0.0", "/x", "GET", false, "") },
 		"require etag": func(c *SanshainClient) {
-			_, _ = c.RequireWithEtag("c", "p", "1.0.0", "/x", "GET", false, "", "\"e\"", Stream{}, "")
+			_, _ = c.RequireWithEtag("c", "p", "1.0.0", "/x", "GET", false, "", "\"e\"", Stream{}, "", nil)
 		},
 		"bundle": func(c *SanshainClient) {
 			_, _ = c.RequireBundle(RequireBundlePayload{ConsumerName: "c", ProducerName: "p", Version: "1.0.0"}, false)
 		},
-		"catalog": func(c *SanshainClient) { _, _ = c.PushCatalog("s", "x", false, false) },
+		"catalog": func(c *SanshainClient) { _, _ = c.PushCatalog("s", "x", false, false, nil) },
 	}
 	for _, status := range []int{http.StatusOK, http.StatusNotModified, http.StatusBadRequest} {
 		ts := warningServer(t, status, `{"system":"s","recorded":false}`)

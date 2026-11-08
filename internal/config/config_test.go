@@ -379,6 +379,11 @@ zzz: 1
 			want: []string{"catalogInf", "provides[1].verison", "requires[0].outputDirectroy", "requires[0].endpoints[2].methd", "zzz"},
 		},
 		{
+			name: "an extra key in an annotation is unknown",
+			yaml: "sanshainUrl: http://x\nannotations:\n  - scope: system\n    name: a\n    value: x\n    label: y\n",
+			want: []string{"annotations[0].label"},
+		},
+		{
 			name: "format on a requires entry is known",
 			yaml: "sanshainUrl: http://x\nrequires:\n  - serviceName: o\n    apiType: asyncapi\n    format: openapi\n",
 			want: nil,
@@ -492,5 +497,61 @@ func TestPuzzledCat(t *testing.T) {
 	strict := "   /\\_/\\  ?\n  ( O_o )   sanshain.yaml: unknown field 'catalogInf' - rejected (strict)\n ---U-U---\n"
 	if got := PuzzledCat([]string{"catalogInf"}, true); got != strict {
 		t.Errorf("expected\n%s\ngot\n%s", strict, got)
+	}
+}
+
+func TestLoadConfig_Annotations(t *testing.T) {
+	cfg, err := LoadConfig(writeConfig(t, `
+sanshainUrl: http://x
+annotations:
+  - scope: version
+    name: requirements
+    value: "http://solar.system/id-{{AREA}}/requirements/{{ID}}"
+  - scope: system
+    name: jenkins
+    value: "https://jenkins.corp/job/payments"
+`), io.Discard)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	want := []Annotation{
+		{Scope: "version", Name: "requirements", Value: "http://solar.system/id-{{AREA}}/requirements/{{ID}}"},
+		{Scope: "system", Name: "jenkins", Value: "https://jenkins.corp/job/payments"},
+	}
+	if len(cfg.Annotations) != 2 || cfg.Annotations[0] != want[0] || cfg.Annotations[1] != want[1] {
+		t.Errorf("expected %v, got %v", want, cfg.Annotations)
+	}
+	for _, yaml := range []string{"", "annotations:\n", "annotations: []\n"} {
+		cfg, err := LoadConfig(writeConfig(t, "sanshainUrl: http://x\n"+yaml), io.Discard)
+		if err != nil || len(cfg.Annotations) != 0 {
+			t.Errorf("%q: expected no annotations, got %v, %v", yaml, cfg, err)
+		}
+	}
+}
+
+// A missing field, another type or another scope is a config error naming
+// the entry; nothing is converted.
+func TestLoadConfig_MalformedAnnotation(t *testing.T) {
+	cases := []struct {
+		entries string
+		want    string
+	}{
+		{"\n  - scope: system\n    name: jenkins\n", "annotations[0] (jenkins): missing 'value'"},
+		{"\n  - scope: system\n    value: x\n", "annotations[0]: missing 'name'"},
+		{"\n  - scope: system\n    name: a\n    value: x\n  - name: b\n    value: y\n", "annotations[1] (b): missing 'scope'"},
+		{"\n  - scope: system\n    name: a\n    value:\n", "annotations[0] (a): missing 'value'"},
+		{"\n  - scope: system\n    name: build\n    value: 42\n", "annotations[0] (build): 'value' must be a string"},
+		{"\n  - scope: system\n    name: flag\n    value: true\n", "annotations[0] (flag): 'value' must be a string"},
+		{"\n  - scope: system\n    name: 7\n    value: x\n", "annotations[0]: 'name' must be a string"},
+		{"\n  - scope: system\n    name: l\n    value: [a]\n", "annotations[0] (l): 'value' must be a string"},
+		{"\n  - scope: product\n    name: a\n    value: x\n", "annotations[0] (a): scope 'product' is not supported — use version or system"},
+		{" jenkins\n", "annotations: must be a list of entries with scope, name and value"},
+		{"\n  - jenkins\n", "annotations[0]: must be an entry with scope, name and value"},
+	}
+	for _, tc := range cases {
+		_, err := LoadConfig(writeConfig(t, "sanshainUrl: http://x\nannotations:"+tc.entries), io.Discard)
+		if err == nil || err.Error() != tc.want {
+			t.Errorf("%q: expected %q, got %v", tc.entries, tc.want, err)
+		}
 	}
 }

@@ -41,6 +41,15 @@ type ProvideConfig struct {
 	Retired bool `yaml:"retired,omitempty"`
 }
 
+// Annotation is one annotations entry of sanshain.yaml: a named value
+// Sanshain shows with the provided version (scope version) or with the system
+// (scope system). Its value may hold {{NAME}} placeholders the build fills.
+type Annotation struct {
+	Scope string `yaml:"scope"`
+	Name  string `yaml:"name"`
+	Value string `yaml:"value"`
+}
+
 type SanshainConfig struct {
 	SanshainURL string `yaml:"sanshainUrl"`
 	ServiceName string `yaml:"serviceName"`
@@ -51,6 +60,8 @@ type SanshainConfig struct {
 	// AutoGa makes a provide GA whenever the build declares trunk or a tag,
 	// unless the --ga flag or SANSHAIN_GA says otherwise.
 	AutoGa bool `yaml:"autoGa,omitempty"`
+	// Annotations as written, placeholders unfilled.
+	Annotations []Annotation `yaml:"annotations,omitempty"`
 	// Path to the project's Backstage catalog-info.yaml, pushed by the
 	// catalog command.
 	CatalogInfo string          `yaml:"catalogInfo,omitempty"`
@@ -89,6 +100,11 @@ func LoadConfig(configPath string, warn io.Writer) (*SanshainConfig, error) {
 		if strict {
 			return nil, ErrUnknownFieldsStrict
 		}
+	}
+
+	// Before the typed parse, which would turn value: 42 into "42".
+	if err := checkAnnotations(&doc); err != nil {
+		return nil, err
 	}
 
 	var config SanshainConfig
@@ -263,6 +279,63 @@ func validateConfig(config *SanshainConfig) error {
 	return nil
 }
 
+// checkAnnotations checks the annotations list: every entry has the strings
+// scope (version or system), name and value. A violation names its entry; the
+// size limits are the service's to check, and an extra key is an unknown
+// field, not an error.
+func checkAnnotations(doc *yaml.Node) error {
+	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+		return nil
+	}
+	root := doc.Content[0]
+	var list *yaml.Node
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value == "annotations" {
+			list = root.Content[i+1]
+		}
+	}
+	if list == nil || isNull(list) {
+		return nil
+	}
+	if list.Kind != yaml.SequenceNode {
+		return errors.New("annotations: must be a list of entries with scope, name and value")
+	}
+	for i, entry := range list.Content {
+		if entry.Kind != yaml.MappingNode {
+			return fmt.Errorf("annotations[%d]: must be an entry with scope, name and value", i)
+		}
+		fields := make(map[string]*yaml.Node)
+		for j := 0; j+1 < len(entry.Content); j += 2 {
+			fields[entry.Content[j].Value] = entry.Content[j+1]
+		}
+		context := fmt.Sprintf("annotations[%d]", i)
+		if name := fields["name"]; isString(name) {
+			context += " (" + name.Value + ")"
+		}
+		for _, field := range knownAnnotationFields {
+			node := fields[field]
+			if node == nil || isNull(node) {
+				return fmt.Errorf("%s: missing '%s'", context, field)
+			}
+			if !isString(node) {
+				return fmt.Errorf("%s: '%s' must be a string", context, field)
+			}
+		}
+		if scope := fields["scope"].Value; scope != "version" && scope != "system" {
+			return fmt.Errorf("%s: scope '%s' is not supported — use version or system", context, scope)
+		}
+	}
+	return nil
+}
+
+func isNull(node *yaml.Node) bool {
+	return node.Kind == yaml.ScalarNode && node.ShortTag() == "!!null"
+}
+
+func isString(node *yaml.Node) bool {
+	return node != nil && node.Kind == yaml.ScalarNode && node.ShortTag() == "!!str"
+}
+
 // strictSetting reads just the yaml strict flag, before the full typed
 // parse; a value that is not a boolean counts as off.
 func strictSetting(data []byte) bool {
@@ -277,10 +350,11 @@ func strictSetting(data []byte) bool {
 // knows: a field another client supports is not unknown here, even when this
 // client ignores it.
 var (
-	knownTopFields      = []string{"sanshainUrl", "serviceName", "clientName", "compression", "bestEffort", "strict", "force", "insecure", "combine", "catalogInfo", "autoGa", "provide", "provides", "requires"}
-	knownProvideFields  = []string{"file", "apiType", "retired", "openApiFile", "asyncApiFile", "protoFile", "combine"}
-	knownRequireFields  = []string{"serviceName", "apiType", "version", "outputDirectory", "endpoints", "format"}
-	knownEndpointFields = []string{"method", "path"}
+	knownTopFields        = []string{"sanshainUrl", "serviceName", "clientName", "compression", "bestEffort", "strict", "force", "insecure", "combine", "catalogInfo", "autoGa", "annotations", "provide", "provides", "requires"}
+	knownProvideFields    = []string{"file", "apiType", "retired", "openApiFile", "asyncApiFile", "protoFile", "combine"}
+	knownRequireFields    = []string{"serviceName", "apiType", "version", "outputDirectory", "endpoints", "format"}
+	knownEndpointFields   = []string{"method", "path"}
+	knownAnnotationFields = []string{"scope", "name", "value"}
 )
 
 // unknownFields returns the path of every key no client knows, in file order.
@@ -296,6 +370,8 @@ func unknownFields(data []byte) []string {
 			walkMapping(value, path, knownProvideFields, &found, nil)
 		case "provides":
 			walkSequence(value, path, knownProvideFields, &found, nil)
+		case "annotations":
+			walkSequence(value, path, knownAnnotationFields, &found, nil)
 		case "requires":
 			walkSequence(value, path, knownRequireFields, &found, func(key string, value *yaml.Node, path string) {
 				if key == "endpoints" {

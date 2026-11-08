@@ -92,6 +92,21 @@ step of its own (needs Sanshain Service 2.4.0 or later):
     SANSHAIN_TRUNK: "true"   # only on the trunk pipeline
 ```
 
+### Annotations from CI
+
+The `{{NAME}}` placeholders of the `annotations` in `sanshain.yaml` are filled from
+`SANSHAIN_SET_NAME` variables (or `--set NAME=value`); annotations need Sanshain Service
+2.13.0 or later:
+
+```yaml
+- name: Sanshain Provide
+  run: sanshain-go provide
+  env:
+    SANSHAIN_TOKEN: ${{ secrets.SANSHAIN_TOKEN }}
+    SANSHAIN_SET_AREA: "7"
+    SANSHAIN_SET_ID: ${{ vars.REQUIREMENTS_ID }}
+```
+
 ## Tips
 
 - **Insecure Connections**: If your Sanshain instance uses a self-signed certificate, use the `--insecure` flag.

@@ -29,6 +29,8 @@ func main() {
 	changeURL := flag.String("change-url", "", "the pull or merge request behind this build (also: SANSHAIN_CHANGE_URL; default: the runner's own variable)")
 	tickets := flag.String("tickets", "", "ticket ids this build closes, comma-separated (also: SANSHAIN_TICKETS)")
 	note := flag.String("note", "", "one line of intent for this provide (also: SANSHAIN_NOTE)")
+	sets := setFlags{}
+	flag.Var(sets, "set", "fill the {{NAME}} placeholders of the annotations in sanshain.yaml, NAME=value; repeatable (also: SANSHAIN_SET_NAME)")
 	showVersion := flag.Bool("version", false, "print the client version and exit")
 	flag.Parse()
 
@@ -77,15 +79,25 @@ func main() {
 		}
 	}
 
+	// Before any request: an unfilled placeholder fails a strict build.
+	annotations, unfilled := fillAnnotations(cfg.Annotations, sets)
+	for _, w := range unfilled {
+		printWarning(w)
+	}
+	if cfg.Strict && len(unfilled) > 0 {
+		fmt.Printf("Error: strict: %s\n", unfilled[0])
+		os.Exit(1)
+	}
+
 	switch command {
 	case "provide":
 		origin := api.ResolveOrigin(*buildURL, *changeURL, *tickets, *note, os.Getenv)
 		stability := resolveStability(gaFlag(*ga), os.Getenv("SANSHAIN_GA"), cfg.AutoGa, streamDeclared(stream, neither))
-		err = handleProvide(client, cfg, stability, stream, origin)
+		err = handleProvide(client, cfg, stability, stream, origin, annotations)
 	case "require":
-		err = handleRequire(client, cfg, sc, stream)
+		err = handleRequire(client, cfg, sc, stream, annotations)
 	case "catalog":
-		err = handleCatalog(client, cfg, stream)
+		err = handleCatalog(client, cfg, stream, annotations)
 	default:
 		fmt.Printf("Unknown command: %s\n", command)
 		usage()
@@ -147,6 +159,34 @@ func streamDeclared(stream api.Stream, trunkAndTagWarning string) bool {
 	return stream.Trunk || stream.Tag != "" || trunkAndTagWarning != ""
 }
 
+// setFlags collects the repeatable --set NAME=value, split at the first =;
+// a later --set for the same NAME wins.
+type setFlags map[string]string
+
+func (s setFlags) String() string {
+	return ""
+}
+
+func (s setFlags) Set(arg string) error {
+	name, value, ok := strings.Cut(arg, "=")
+	if !ok || name == "" {
+		return fmt.Errorf("expected NAME=value, got %q", arg)
+	}
+	s[name] = value
+	return nil
+}
+
+// fillAnnotations fills the placeholders of the annotations in sanshain.yaml
+// from the --set values and SANSHAIN_SET_* and returns the filled entries and
+// one warning per entry left out.
+func fillAnnotations(declared []config.Annotation, sets setFlags) ([]api.Annotation, []string) {
+	entries := make([]api.Annotation, len(declared))
+	for i, a := range declared {
+		entries[i] = api.Annotation(a)
+	}
+	return api.FillAnnotations(entries, sets, os.Getenv)
+}
+
 // resolveBestEffort applies --best-effort, then a set SANSHAIN_BEST_EFFORT,
 // then the yaml bestEffort value.
 func resolveBestEffort(flagValue, yamlValue bool) bool {
@@ -169,7 +209,7 @@ func usage() {
 	flag.PrintDefaults()
 }
 
-func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, stability string, stream api.Stream, origin api.Origin) error {
+func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, stability string, stream api.Stream, origin api.Origin, annotations []api.Annotation) error {
 	if cfg.ServiceName == "" {
 		if cfg.Strict {
 			return fmt.Errorf("serviceName is required (in sanshain.yaml or via environment)")
@@ -221,7 +261,7 @@ func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, stabi
 		}
 
 		for _, f := range files {
-			if err := provideFile(client, cfg, f.path, f.apiType, stability, stream, origin); err != nil {
+			if err := provideFile(client, cfg, f.path, f.apiType, stability, stream, origin, annotations); err != nil {
 				return err
 			}
 			provided = true
@@ -239,7 +279,7 @@ func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, stabi
 	return nil
 }
 
-func provideFile(client *api.SanshainClient, cfg *config.SanshainConfig, filePath, apiType, stability string, stream api.Stream, origin api.Origin) error {
+func provideFile(client *api.SanshainClient, cfg *config.SanshainConfig, filePath, apiType, stability string, stream api.Stream, origin api.Origin, annotations []api.Annotation) error {
 	producerName, compression := cfg.ServiceName, cfg.Compression
 	/* #nosec G304 */
 	specData, err := os.ReadFile(filePath)
@@ -262,6 +302,7 @@ func provideFile(client *api.SanshainClient, cfg *config.SanshainConfig, filePat
 			Trunk:        stream.Trunk,
 			Tag:          stream.Tag,
 			Origin:       origin,
+			Annotations:  annotations,
 		}
 		fmt.Printf("Providing OpenAPI %s (stability: %s) to %s...\n", producerName, stability, client.BaseURL)
 		resp, err = client.Provide(payload, compression)
@@ -273,6 +314,7 @@ func provideFile(client *api.SanshainClient, cfg *config.SanshainConfig, filePat
 			Trunk:        stream.Trunk,
 			Tag:          stream.Tag,
 			Origin:       origin,
+			Annotations:  annotations,
 		}
 		fmt.Printf("Providing AsyncAPI %s (stability: %s) to %s...\n", producerName, stability, client.BaseURL)
 		resp, err = client.ProvideAsyncApi(payload, compression)
@@ -284,6 +326,7 @@ func provideFile(client *api.SanshainClient, cfg *config.SanshainConfig, filePat
 			Trunk:        stream.Trunk,
 			Tag:          stream.Tag,
 			Origin:       origin,
+			Annotations:  annotations,
 		}
 		fmt.Printf("Providing Proto %s (stability: %s) to %s...\n", producerName, stability, client.BaseURL)
 		resp, err = client.ProvideProto(payload, compression)
@@ -346,7 +389,9 @@ func retireFamily(client *api.SanshainClient, cfg *config.SanshainConfig, apiTyp
 	return nil
 }
 
-func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *cache.SanshainCache, stream api.Stream) error {
+// handleRequire sends the annotations along; the client keeps only the
+// system ones.
+func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *cache.SanshainCache, stream api.Stream, annotations []api.Annotation) error {
 	if cfg.ServiceName == "" {
 		if cfg.Strict {
 			return fmt.Errorf("serviceName is required (in sanshain.yaml or via environment)")
@@ -380,7 +425,7 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 				cachedEtag = cachedEntry.Etag
 			}
 
-			result, reqErr = client.RequireWithEtag(cfg.ServiceName, req.ServiceName, req.Version, endpoint.Path, endpoint.Method, false, req.ApiType, cachedEtag, stream, req.Format)
+			result, reqErr = client.RequireWithEtag(cfg.ServiceName, req.ServiceName, req.Version, endpoint.Path, endpoint.Method, false, req.ApiType, cachedEtag, stream, req.Format, annotations)
 
 			ext := getExtension(req.ApiType)
 			fileName = req.ServiceName + "." + ext
@@ -400,6 +445,7 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 				Trunk:        stream.Trunk,
 				Tag:          stream.Tag,
 				Format:       req.Format,
+				Annotations:  annotations,
 			}
 			for _, e := range req.Endpoints {
 				payload.Endpoints = append(payload.Endpoints, api.RequireBundleEndpoint{
@@ -486,7 +532,7 @@ func checkWarnings(strict bool, warnings []string, err error) error {
 
 // handleCatalog pushes the catalogInfo file so Sanshain records the system's
 // Peripheral Resources. Strict here checks only serviceName and catalogInfo.
-func handleCatalog(client *api.SanshainClient, cfg *config.SanshainConfig, stream api.Stream) error {
+func handleCatalog(client *api.SanshainClient, cfg *config.SanshainConfig, stream api.Stream, annotations []api.Annotation) error {
 	if cfg.ServiceName == "" {
 		if cfg.Strict {
 			return &configError{"serviceName is required (in sanshain.yaml or via environment)"}
@@ -509,7 +555,7 @@ func handleCatalog(client *api.SanshainClient, cfg *config.SanshainConfig, strea
 	}
 
 	fmt.Printf("Pushing catalog %s for %s to %s...\n", cfg.CatalogInfo, cfg.ServiceName, client.BaseURL)
-	resp, err := client.PushCatalog(cfg.ServiceName, string(content), stream.Trunk, cfg.Compression)
+	resp, err := client.PushCatalog(cfg.ServiceName, string(content), stream.Trunk, cfg.Compression, annotations)
 	warnings := client.TakeWarnings()
 	// The header names the reason; a service sending none still warns.
 	if err == nil && !resp.Recorded && len(warnings) == 0 {

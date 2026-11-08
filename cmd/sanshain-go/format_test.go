@@ -200,15 +200,15 @@ func TestFormat_EtagKeyedPerFormat(t *testing.T) {
 	sc := cache.NewSanshainCache(t.TempDir())
 	client := api.NewSanshainClient(rs.URL, "", false)
 
-	if err := handleRequire(client, cfg, sc, api.Stream{}); err != nil {
+	if err := handleRequire(client, cfg, sc, api.Stream{}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := handleRequire(client, cfg, sc, api.Stream{}); err != nil {
+	if err := handleRequire(client, cfg, sc, api.Stream{}, nil); err != nil {
 		t.Fatal(err)
 	}
 	cfg.Requires[0].Format = ""
 	cfg.Requires[0].OutputDirectory = filepath.Join(t.TempDir(), "async")
-	if err := handleRequire(client, cfg, sc, api.Stream{}); err != nil {
+	if err := handleRequire(client, cfg, sc, api.Stream{}, nil); err != nil {
 		t.Fatal(err)
 	}
 

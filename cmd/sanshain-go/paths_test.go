@@ -69,14 +69,14 @@ requires:
 	}
 	client := api.NewSanshainClient(ts.URL, "", false)
 
-	if err := handleProvide(client, cfg, "snapshot", api.Stream{}, api.Origin{}); err != nil {
+	if err := handleProvide(client, cfg, "snapshot", api.Stream{}, api.Origin{}, nil); err != nil {
 		t.Fatalf("provide failed: %v", err)
 	}
 	if provided != "openapi: next-to-config" {
 		t.Errorf("expected the spec next to the config to be sent, got %q", provided)
 	}
 
-	if err := handleRequire(client, cfg, cache.NewSanshainCache(t.TempDir()), api.Stream{}); err != nil {
+	if err := handleRequire(client, cfg, cache.NewSanshainCache(t.TempDir()), api.Stream{}, nil); err != nil {
 		t.Fatalf("require failed: %v", err)
 	}
 	got, err := os.ReadFile(filepath.Join(dir, "gen", "other.yaml"))
