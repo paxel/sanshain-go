@@ -12,16 +12,33 @@ You can use `go generate` to trigger the download of API dependencies and subseq
     go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest
     ```
 
-2.  **Add generate comments** in your Go files (e.g., `internal/api/doc.go`):
+2.  **Add generate comments** in your Go files (e.g., `internal/api/doc.go`). `go generate` runs
+    each command in the directory of the package holding the directive, not in the module root,
+    so point `--config` from there at `sanshain.yaml`; the `outputDirectory` inside it resolves
+    against the file's directory. With this `sanshain.yaml` in the module root:
+    ```yaml
+    serviceName: my-go-service
+    requires:
+      - serviceName: auth-service
+        version: 1.2.0
+        outputDirectory: internal/api/auth
+        endpoints:
+          - method: GET
+            path: /users/{id}
+    ```
+    the directives in `internal/api/doc.go` are:
     ```go
-    //go:generate sanshain-go require
-    //go:generate oapi-codegen -package auth -o auth/client.gen.go internal/api/auth/auth-service_bundle.yaml
+    //go:generate sanshain-go --config ../../sanshain.yaml require
+    //go:generate oapi-codegen -package auth -o auth/client.gen.go auth/auth-service.yaml
     package api
     ```
+    One endpoint is saved as `auth-service.yaml`; two or more as `auth-service_bundle.yaml`. The
+    ETag state file `.sanshain-cache.json` lands in the package directory, so add it to
+    `.gitignore`.
 
 3.  **Run generate**:
     ```bash
-    export SANSHAIN_TOKEN=xxx
+    export SANSHAIN_URL=https://sanshain.example.com SANSHAIN_TOKEN=xxx
     go generate ./...
     ```
 
@@ -30,7 +47,7 @@ You can use `go generate` to trigger the download of API dependencies and subseq
 ### GitLab CI
 ```yaml
 generate-api:
-  image: golang:1.21
+  image: golang:1.23
   script:
     - go install github.com/paxel/sanshain-go/v2/cmd/sanshain-go@latest
     - sanshain-go require
