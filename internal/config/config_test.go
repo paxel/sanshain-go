@@ -56,6 +56,19 @@ requires:
 	}
 }
 
+// autoGa is off unless sanshain.yaml says true.
+func TestLoadConfig_AutoGa(t *testing.T) {
+	for yaml, want := range map[string]bool{"": false, "autoGa: true\n": true, "autoGa: false\n": false} {
+		cfg, err := LoadConfig(writeConfig(t, "sanshainUrl: http://x\n"+yaml), io.Discard)
+		if err != nil {
+			t.Fatalf("%q: LoadConfig failed: %v", yaml, err)
+		}
+		if cfg.AutoGa != want {
+			t.Errorf("%q: expected autoGa %v, got %v", yaml, want, cfg.AutoGa)
+		}
+	}
+}
+
 func TestLoadConfig_MissingRequireVersion(t *testing.T) {
 	path := writeConfig(t, `
 sanshainUrl: http://localhost:8080
@@ -378,6 +391,7 @@ force: true
 insecure: true
 combine: true
 catalogInfo: catalog-info.yaml
+autoGa: true
 provides:
   - file: a.yaml
     combine: true

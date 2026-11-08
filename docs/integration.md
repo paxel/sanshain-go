@@ -65,6 +65,20 @@ switch so the spec is published as an immutable GA version:
 The published version is read from the spec file itself (`info.version`, or the
 `// sanshain-version:` comment for proto) — there is no branch detection and no version flag.
 
+With `autoGa: true` in `sanshain.yaml` the ga switch can go: a build that declares trunk
+(`SANSHAIN_TRUNK: "true"`) or a tag (`SANSHAIN_TAG`) provides GA by itself, and
+`SANSHAIN_GA: "false"` keeps one such build a snapshot. The CI token's user needs the
+`releaser` role, and a trunk build that changes the spec without a version bump fails with
+`409 immutable_ga` and the proposed version.
+
+```yaml
+- name: Sanshain Provide (trunk, GA through autoGa)
+  run: sanshain-go provide
+  env:
+    SANSHAIN_TOKEN: ${{ secrets.SANSHAIN_TOKEN }}
+    SANSHAIN_TRUNK: "true"
+```
+
 ### Pushing the Backstage Catalog from CI
 
 If the project has a Backstage `catalog-info.yaml`, set `catalogInfo` in `sanshain.yaml` and add a

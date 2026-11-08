@@ -48,6 +48,9 @@ type SanshainConfig struct {
 	Compression bool   `yaml:"compression,omitempty"`
 	BestEffort  bool   `yaml:"bestEffort,omitempty"`
 	Strict      bool   `yaml:"strict,omitempty"`
+	// AutoGa makes a provide GA whenever the build declares trunk or a tag,
+	// unless the --ga flag or SANSHAIN_GA says otherwise.
+	AutoGa bool `yaml:"autoGa,omitempty"`
 	// Path to the project's Backstage catalog-info.yaml, pushed by the
 	// catalog command.
 	CatalogInfo string          `yaml:"catalogInfo,omitempty"`
@@ -145,7 +148,7 @@ var removedFields = []struct {
 	{"branch", "the branch model was removed in Sanshain 2.0; replace with an exact 'version' pin on each requires entry — provides read the version from the spec file (info.version / // sanshain-version:)"},
 	{"timeout", "Sanshain 2.0 resolves pinned versions immediately and never waits; remove it"},
 	{"baseVersion", "optimistic concurrency was removed in Sanshain 2.0 — GA versions are immutable, snapshots are last-writer-wins; remove it"},
-	{"releaseBranches", "the branch model was removed in Sanshain 2.0; stability is 'snapshot' by default and 'ga' only via SANSHAIN_GA=true or --ga"},
+	{"releaseBranches", "the branch model was removed in Sanshain 2.0; stability is 'snapshot' by default and 'ga' only via SANSHAIN_GA=true, --ga, or autoGa: true on a trunk or tag build"},
 }
 
 func checkRemovedFields(data []byte) error {
@@ -274,7 +277,7 @@ func strictSetting(data []byte) bool {
 // knows: a field another client supports is not unknown here, even when this
 // client ignores it.
 var (
-	knownTopFields      = []string{"sanshainUrl", "serviceName", "clientName", "compression", "bestEffort", "strict", "force", "insecure", "combine", "catalogInfo", "provide", "provides", "requires"}
+	knownTopFields      = []string{"sanshainUrl", "serviceName", "clientName", "compression", "bestEffort", "strict", "force", "insecure", "combine", "catalogInfo", "autoGa", "provide", "provides", "requires"}
 	knownProvideFields  = []string{"file", "apiType", "retired", "openApiFile", "asyncApiFile", "protoFile", "combine"}
 	knownRequireFields  = []string{"serviceName", "apiType", "version", "outputDirectory", "endpoints", "format"}
 	knownEndpointFields = []string{"method", "path"}

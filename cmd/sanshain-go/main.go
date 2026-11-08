@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/paxel/sanshain-go/v2/internal/api"
 	"github.com/paxel/sanshain-go/v2/internal/cache"
@@ -21,7 +22,7 @@ func main() {
 	configPath := flag.String("config", "sanshain.yaml", "path to sanshain.yaml")
 	insecure := flag.Bool("insecure", false, "skip SSL certificate verification")
 	bestEffort := flag.Bool("best-effort", false, "continue on errors")
-	ga := flag.Bool("ga", false, "provide as immutable 'ga' instead of the default 'snapshot' (also: SANSHAIN_GA=true or 1)")
+	ga := flag.Bool("ga", false, "provide as immutable 'ga' instead of the default 'snapshot'; --ga=false keeps a snapshot despite autoGa (also: SANSHAIN_GA=true or 1, SANSHAIN_GA=false)")
 	trunk := flag.Bool("trunk", false, "this build is trunk's: it maintains the main graph (also: SANSHAIN_TRUNK=true or 1)")
 	tag := flag.String("tag", "", "this build belongs to a sanshain-branch — release/hotfix pipelines (also: SANSHAIN_TAG)")
 	buildURL := flag.String("build-url", "", "where this build ran (also: SANSHAIN_BUILD_URL; default: the runner's own variable)")
@@ -79,7 +80,8 @@ func main() {
 	switch command {
 	case "provide":
 		origin := api.ResolveOrigin(*buildURL, *changeURL, *tickets, *note, os.Getenv)
-		err = handleProvide(client, cfg, resolveStability(*ga), stream, origin)
+		stability := resolveStability(gaFlag(*ga), os.Getenv("SANSHAIN_GA"), cfg.AutoGa, streamDeclared(stream, neither))
+		err = handleProvide(client, cfg, stability, stream, origin)
 	case "require":
 		err = handleRequire(client, cfg, sc, stream)
 	case "catalog":
@@ -101,13 +103,48 @@ func main() {
 	}
 }
 
-// resolveStability implements the ga switch: every provide is a snapshot
-// unless the --ga flag or SANSHAIN_GA=true explicitly says otherwise.
-func resolveStability(gaFlag bool) string {
-	if gaFlag || utils.IsOn(os.Getenv("SANSHAIN_GA")) {
+// resolveStability decides a provide's stability; the first of these that
+// is set decides:
+//  1. the --ga flag, true or false (nil when not given);
+//  2. SANSHAIN_GA when not blank, read like every switch, so an explicit
+//     false counts;
+//  3. autoGa: true on a build that declares a stream (trunk, a tag, or both);
+//  4. otherwise snapshot.
+//
+// There is no branch detection: CI declares trunk and tag on its protected
+// pipelines, so only those builds become GA.
+func resolveStability(gaFlag *bool, gaEnv string, autoGa, streamDeclared bool) string {
+	ga := autoGa && streamDeclared
+	switch {
+	case gaFlag != nil:
+		ga = *gaFlag
+	case strings.TrimSpace(gaEnv) != "":
+		ga = utils.IsOn(gaEnv)
+	}
+	if ga {
 		return "ga"
 	}
 	return "snapshot"
+}
+
+// gaFlag is the --ga flag when it was given (also as --ga=false), else nil.
+func gaFlag(value bool) *bool {
+	given := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "ga" {
+			given = true
+		}
+	})
+	if !given {
+		return nil
+	}
+	return &value
+}
+
+// streamDeclared reports whether the build declared a stream: trunk, a tag,
+// or both — which sends neither (the warning) but still declared one.
+func streamDeclared(stream api.Stream, trunkAndTagWarning string) bool {
+	return stream.Trunk || stream.Tag != "" || trunkAndTagWarning != ""
 }
 
 // resolveBestEffort applies --best-effort, then a set SANSHAIN_BEST_EFFORT,

@@ -519,7 +519,8 @@ func TestProvide_ForbiddenNamesTheReleaserRole(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a refusal")
 	}
-	if !strings.Contains(err.Error(), "releaser") || !strings.Contains(err.Error(), "snapshot") {
+	if !strings.Contains(err.Error(), "releaser") || !strings.Contains(err.Error(), "snapshot") ||
+		!strings.Contains(err.Error(), "autoGa off") || !strings.Contains(err.Error(), "SANSHAIN_GA=false") {
 		t.Errorf("the refusal names the role and the fallback, got: %v", err)
 	}
 }

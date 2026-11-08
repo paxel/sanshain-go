@@ -13,7 +13,7 @@ A Go-based CLI tool and client for the [Sanshain Service](https://github.com/pax
 
 ## The 2.0 model in one paragraph
 
-Branches are gone. Every **provide** publishes a spec under the version declared *inside the spec file* — `info.version` for OpenAPI/AsyncAPI, a mandatory `// sanshain-version:` comment for proto. Accepted spellings are `MAJOR[.MINOR[.PATCH]]` with an optional leading `v`; omitted parts are zero (`v2` becomes `2.0.0`) and the stored form is always the full three-part version. Each provide is a `snapshot` (overwritable work-in-progress) unless the **ga switch** is set (`SANSHAIN_GA=true` or `--ga`), which publishes an immutable `ga` version. Every **require** pins an exact version — no ranges, no `latest`, no fallback, no waiting.
+Branches are gone. Every **provide** publishes a spec under the version declared *inside the spec file* — `info.version` for OpenAPI/AsyncAPI, a mandatory `// sanshain-version:` comment for proto. Accepted spellings are `MAJOR[.MINOR[.PATCH]]` with an optional leading `v`; omitted parts are zero (`v2` becomes `2.0.0`) and the stored form is always the full three-part version. Each provide is a `snapshot` (overwritable work-in-progress) unless the **ga switch** is set (`SANSHAIN_GA=true` or `--ga`), or `autoGa: true` meets a trunk or tag build, which publishes an immutable `ga` version. Every **require** pins an exact version — no ranges, no `latest`, no fallback, no waiting.
 
 ## Features
 
@@ -91,11 +91,34 @@ There is no git detection and no branch matching: snapshot is always the default
 GA is always an explicit act. Publishing GA requires the `releaser` role — without
 it the server answers `403` and the error names the role and the snapshot fallback.
 
+#### autoGa: GA on every trunk or tag build
+
+```yaml
+autoGa: true
+```
+
+With `autoGa: true` in `sanshain.yaml` a provide is GA whenever the build declares a
+stream: trunk (`--trunk` / `SANSHAIN_TRUNK`) or a tag (`--tag` / `SANSHAIN_TAG`), also
+when it declares both. Without a stream it stays a snapshot, so a developer's laptop
+never releases. The first of these that is set decides:
+
+1. `--ga`, also as `--ga=false`;
+2. `SANSHAIN_GA` (an explicit `false` counts; empty or absent does not);
+3. `autoGa: true` with trunk or a tag;
+4. `snapshot`.
+
+There is still no branch detection: CI declares trunk and tag on its protected
+pipelines only, and that is what makes them GA. The CI token's user needs the
+`releaser` role, and a trunk build that changes the spec without a version bump
+fails with `409 immutable_ga` and the proposed version: bump the version in the spec
+file and build again. A retire never carries a stability, `autoGa` or not.
+
 #### Streams: trunk and release branches
 
 Alongside stability, the pipeline declares which dependency graph its calls
 belong to. Like the ga switch this is a property of the invocation and never
-appears in `sanshain.yaml`:
+appears in `sanshain.yaml` (only `autoGa` may say what a declared stream means for
+stability):
 
 ```bash
 sanshain-go --trunk provide      # trunk CI: maintains the main graph (also SANSHAIN_TRUNK=true)
@@ -355,7 +378,8 @@ keep failing with their migration hint.
 3. Add an exact `version:` pin to every `requires` entry
    (`GET /producers/<name>/versions` lists what a producer offers).
 4. On protected-branch CI pipelines set `SANSHAIN_GA=true` (or pass `--ga`) so releases go
-   out as GA; every other build publishes snapshots.
+   out as GA — or set `autoGa: true` and let `--trunk` / `--tag` do it; every other build
+   publishes snapshots.
 5. Update import paths / install commands to the `/v2` module path.
 
 ## Integration with Go Build Process

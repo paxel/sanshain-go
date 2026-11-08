@@ -431,7 +431,7 @@ func (c *SanshainClient) provideFailure(resp *http.Response, body string) error 
 	// repository. Naming it is the whole value of catching this status.
 	if resp.StatusCode == http.StatusForbidden {
 		return fmt.Errorf(
-			"provide refused (403): %s\n  Publishing a GA version requires the 'releaser' role. Grant it to the user or token this build authenticates as (administrators and root always hold it), or publish as a snapshot by leaving --ga / SANSHAIN_GA unset",
+			"provide refused (403): %s\n  Publishing a GA version requires the 'releaser' role. Grant it to the user or token this build authenticates as (administrators and root always hold it), or publish as a snapshot by leaving --ga / SANSHAIN_GA unset and autoGa off (or setting SANSHAIN_GA=false)",
 			eb.Error)
 	}
 	return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, sanitize(body))
