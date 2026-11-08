@@ -410,6 +410,7 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 
 	for _, req := range cfg.Requires {
 		fmt.Printf("Requiring %s@%s from %s...\n", req.ServiceName, req.Version, cfg.SanshainURL)
+		apiType := requireApiType(req.ApiType)
 
 		var result *api.RequireResult
 		var reqErr error
@@ -425,9 +426,9 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 				cachedEtag = cachedEntry.Etag
 			}
 
-			result, reqErr = client.RequireWithEtag(cfg.ServiceName, req.ServiceName, req.Version, endpoint.Path, endpoint.Method, false, req.ApiType, cachedEtag, stream, req.Format, annotations)
+			result, reqErr = client.RequireWithEtag(cfg.ServiceName, req.ServiceName, req.Version, endpoint.Path, endpoint.Method, false, apiType, cachedEtag, stream, req.Format, annotations)
 
-			ext := getExtension(req.ApiType)
+			ext := getExtension(apiType)
 			fileName = req.ServiceName + "." + ext
 		} else {
 			cacheKey = cache.RequireBundleKey(req.ServiceName, req.Version, req.Format)
@@ -441,7 +442,7 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 				ConsumerName: cfg.ServiceName,
 				ProducerName: req.ServiceName,
 				Version:      req.Version,
-				ApiType:      req.ApiType,
+				ApiType:      apiType,
 				Trunk:        stream.Trunk,
 				Tag:          stream.Tag,
 				Format:       req.Format,
@@ -455,7 +456,7 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 			}
 			result, reqErr = client.RequireBundleWithEtag(payload, cfg.Compression, cachedEtag)
 
-			ext := getExtension(req.ApiType)
+			ext := getExtension(apiType)
 			fileName = req.ServiceName + "_bundle." + ext
 		}
 
@@ -489,6 +490,15 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 	}
 
 	return nil
+}
+
+// requireApiType is a require's apiType as the service's routes and bundle
+// spell it: grpc, which a provide accepts too, is proto.
+func requireApiType(apiType string) string {
+	if apiType == "grpc" {
+		return "proto"
+	}
+	return apiType
 }
 
 func getExtension(apiType string) string {
