@@ -2,6 +2,10 @@
 
 [![Build and Test](https://github.com/paxel/sanshain-go/actions/workflows/build.yml/badge.svg?branch=summer)](https://github.com/paxel/sanshain-go/actions/workflows/build.yml)
 [![Security](https://github.com/paxel/sanshain-go/actions/workflows/security.yml/badge.svg?branch=summer)](https://github.com/paxel/sanshain-go/actions/workflows/security.yml)
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=paxel_sanshain-go&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=paxel_sanshain-go)
+[![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=paxel_sanshain-go&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=paxel_sanshain-go)
+[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=paxel_sanshain-go&metric=coverage)](https://sonarcloud.io/summary/new_code?id=paxel_sanshain-go)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/paxel/sanshain-go/badge)](https://scorecard.dev/viewer/?uri=github.com/paxel/sanshain-go)
 [![Release](https://img.shields.io/github/v/release/paxel/sanshain-go)](https://github.com/paxel/sanshain-go/releases/latest)
 [![Go Reference](https://pkg.go.dev/badge/github.com/paxel/sanshain-go/v2.svg)](https://pkg.go.dev/github.com/paxel/sanshain-go/v2)
 [![Go version](https://img.shields.io/github/go-mod/go-version/paxel/sanshain-go)](https://github.com/paxel/sanshain-go/blob/summer/go.mod)
