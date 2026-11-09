@@ -37,3 +37,19 @@ jobs:
 
       - name: Test
         run: go test -v ./...
+
+  # The same scan as the weekly Security workflow, with the same job name, so a
+  # pull request that brings in a vulnerable module is stopped before the merge.
+  govulncheck:
+    name: Vulnerable Go modules (govulncheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The current Go, not the 1.23 floor: the floor is a compatibility promise, and
+      # an unsupported Go's own standard-library advisories would keep this red with
+      # nothing to fix here. Dependencies are checked the same either way.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 'stable'
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...

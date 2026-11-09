@@ -1,0 +1,57 @@
+# CodeQL code scanning, advanced setup so it is versioned here: the client's Go
+# and the workflows themselves, on every push and pull request and weekly,
+# because new queries appear without any change in this repo. The alerts show
+# under Security ▸ Code scanning. Settings ▸ Code security ▸ Code scanning ▸
+# Default setup stays off: it cannot run beside this workflow.
+#
+# Third-party actions are pinned to full commit SHAs; the comment names the
+# version.
+name: CodeQL
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  schedule:
+    - cron: "41 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Go is only extracted while it compiles: no build-mode none.
+          - language: go
+            build-mode: manual
+          - language: actions
+            build-mode: none
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The same Go as the Build and Test workflow.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: matrix.language == 'go'
+        with:
+          go-version: '1.23'
+
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Build
+        if: matrix.language == 'go'
+        run: go build ./...
+
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          category: /language:${{ matrix.language }}
