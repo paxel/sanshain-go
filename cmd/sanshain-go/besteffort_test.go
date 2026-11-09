@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -85,29 +86,96 @@ func TestBestEffort_RequireGoesOnWithTheNextEntry(t *testing.T) {
 	}
 }
 
-// Best effort never softens a broken sanshain.yaml.
-func TestBestEffort_ABrokenConfigFails(t *testing.T) {
-	cases := map[string]string{
-		"unreadable":             "",
-		"invalid":                "serviceName: svc\nrequires:\n  - serviceName: users\n    outputDirectory: gen\n    endpoints:\n      - method: GET\n        path: /x\n",
-		"1.x field":              "sanshainUrl: http://127.0.0.1:1\nserviceName: svc\nreleaseBranches: [main]\n",
-		"unsupported apiType":    "sanshainUrl: http://127.0.0.1:1\nserviceName: svc\nprovides:\n  - file: openapi.yaml\n    apiType: raml\n",
-		"bestEffort in the file": "sanshainUrl: http://127.0.0.1:1\nserviceName: svc\nbestEffort: true\nprovides:\n  - file: openapi.yaml\n    apiType: raml\n",
+// A missing or broken sanshain.yaml fails without best effort, naming the
+// error; with --best-effort or SANSHAIN_BEST_EFFORT it is a warning, exit 0
+// and no call. The file's own bestEffort does not count for it.
+func TestBestEffort_AMissingOrBrokenConfig(t *testing.T) {
+	broken := map[string]string{
+		"missing":                  "",
+		"invalid YAML":             "sanshainUrl: [http://127.0.0.1:1\nserviceName: svc\n",
+		"failed validation":        "serviceName: svc\nrequires:\n  - serviceName: users\n    outputDirectory: gen\n    endpoints:\n      - method: GET\n        path: /x\n",
+		"1.x field":                "sanshainUrl: http://127.0.0.1:1\nserviceName: svc\nreleaseBranches: [main]\n",
+		"unsupported apiType":      "sanshainUrl: http://127.0.0.1:1\nserviceName: svc\nprovides:\n  - file: openapi.yaml\n    apiType: raml\n",
+		"unknown requires apiType": "sanshainUrl: http://127.0.0.1:1\nserviceName: svc\nrequires:\n  - serviceName: users\n    version: 1.0.0\n    apiType: raml\n    outputDirectory: gen\n    endpoints:\n      - method: GET\n        path: /x\n",
 	}
-	for name, yaml := range cases {
+	modes := []struct {
+		name string
+		env  []string
+		args []string
+		ok   bool
+	}{
+		{"off", nil, nil, false},
+		{"flag", nil, []string{"--best-effort"}, true},
+		{"env", []string{"SANSHAIN_BEST_EFFORT=true"}, nil, true},
+		{"env false", []string{"SANSHAIN_BEST_EFFORT=false"}, nil, false},
+	}
+	for name, yaml := range broken {
+		for _, mode := range modes {
+			for _, command := range []string{"provide", "require", "catalog"} {
+				t.Run(name+"/"+mode.name+"/"+command, func(t *testing.T) {
+					cfgPath := filepath.Join(t.TempDir(), "sanshain.yaml")
+					if yaml != "" {
+						writeFile(t, cfgPath, yaml)
+					}
+					args := append(append([]string{"--config", cfgPath}, mode.args...), command)
+					stdout, _, code := runMain(t, mode.env, args...)
+					if !mode.ok {
+						if code != 1 || !strings.HasPrefix(stdout, "Error loading config: ") {
+							t.Fatalf("expected the config error and exit 1, got %d %q", code, stdout)
+						}
+						if yaml == "" && !strings.Contains(stdout, cfgPath) {
+							t.Errorf("expected the missing file named, got %q", stdout)
+						}
+						return
+					}
+					if code != 0 {
+						t.Fatalf("expected exit 0 under best effort, got %d %q", code, stdout)
+					}
+					// One warning line and nothing else: no call, no skip notice.
+					if !strings.HasPrefix(stdout, "Warning: ") || strings.Count(stdout, "\n") != 1 {
+						t.Errorf("expected only the config error as a warning, got %q", stdout)
+					}
+					if yaml == "" && !strings.Contains(stdout, cfgPath) {
+						t.Errorf("expected the missing file named, got %q", stdout)
+					}
+				})
+			}
+		}
+	}
+}
+
+// The broken file's own bestEffort does not soften it.
+func TestBestEffort_ABrokenConfigsOwnBestEffortDoesNotCount(t *testing.T) {
+	for name, yaml := range map[string]string{
+		"invalid YAML":        "bestEffort: true\nsanshainUrl: [http://127.0.0.1:1\n",
+		"1.x field":           "sanshainUrl: http://127.0.0.1:1\nserviceName: svc\nbestEffort: true\nbranch: main\n",
+		"unsupported apiType": "sanshainUrl: http://127.0.0.1:1\nserviceName: svc\nbestEffort: true\nprovides:\n  - file: openapi.yaml\n    apiType: raml\n",
+	} {
 		t.Run(name, func(t *testing.T) {
 			cfgPath := filepath.Join(t.TempDir(), "sanshain.yaml")
-			if yaml != "" {
-				writeFile(t, cfgPath, yaml)
-			}
-			stdout, _, code := runMain(t, []string{"SANSHAIN_BEST_EFFORT=true"}, "--config", cfgPath, "--best-effort", "provide")
-			if code == 0 {
-				t.Fatalf("expected a broken config to fail under best effort, got %q", stdout)
-			}
-			if !strings.Contains(stdout, "Error loading config: ") {
-				t.Errorf("expected the config error, got %q", stdout)
+			writeFile(t, cfgPath, yaml)
+			stdout, _, code := runMain(t, nil, "--config", cfgPath, "provide")
+			if code != 1 || !strings.HasPrefix(stdout, "Error loading config: ") {
+				t.Fatalf("expected the config error and exit 1, got %d %q", code, stdout)
 			}
 		})
+	}
+}
+
+// Best effort for a broken file is a noop: no request reaches the service.
+func TestBestEffort_ABrokenConfigMakesNoCall(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+	}))
+	t.Cleanup(srv.Close)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "openapi.yaml"), openapiDoc)
+	cfgPath := filepath.Join(dir, "sanshain.yaml")
+	writeFile(t, cfgPath, "sanshainUrl: "+srv.URL+"\nserviceName: svc\nbranch: main\nprovides:\n  - file: openapi.yaml\n")
+	stdout, _, code := runMain(t, nil, "--config", cfgPath, "--best-effort", "provide")
+	if code != 0 || calls.Load() != 0 {
+		t.Errorf("expected exit 0 and no call, got %d with %d calls: %q", code, calls.Load(), stdout)
 	}
 }
 

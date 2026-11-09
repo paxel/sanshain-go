@@ -95,7 +95,7 @@ func TestRequire_EtagPerOutputDirectoryAndLostFile(t *testing.T) {
       - method: GET
         path: /x
 `)
-	cfg, err := config.LoadConfig(cfgPath, &strings.Builder{})
+	cfg, err := config.LoadConfig(cfgPath, &strings.Builder{}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

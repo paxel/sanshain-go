@@ -193,7 +193,7 @@ func TestFormat_BestEffortWarnsAndWritesNothing(t *testing.T) {
 func TestFormat_EtagKeyedPerFormat(t *testing.T) {
 	rs := newRequireServer(t, openapiDoc, `"e-openapi"`, "2.4.0")
 	cfgPath, _ := formatProject(t, rs.URL, singleEntry)
-	cfg, err := config.LoadConfig(cfgPath, &strings.Builder{})
+	cfg, err := config.LoadConfig(cfgPath, &strings.Builder{}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

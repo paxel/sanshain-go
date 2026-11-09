@@ -71,14 +71,19 @@ type SanshainConfig struct {
 }
 
 // ErrUnknownFieldsStrict is returned when strict mode rejects unknown
-// sanshain.yaml fields. It is a configuration error best-effort never softens.
+// sanshain.yaml fields of a file that otherwise loads. It is a configuration
+// error best-effort never softens.
 var ErrUnknownFieldsStrict = errors.New("strict: sanshain.yaml has unknown fields")
 
 // LoadConfig reads sanshain.yaml. As soon as it parses as YAML, legacy fields
 // are rejected, then unknown fields are reported to warn (the puzzled cat) —
-// failing under strict — and only then is anything else validated, so a typo
-// is named even when it causes a later validation error.
-func LoadConfig(configPath string, warn io.Writer) (*SanshainConfig, error) {
+// failing under strict — before any other error is returned, so a typo is
+// named even when it causes a later validation error.
+//
+// bestEffort is best effort from outside the file (flag or environment). Under
+// it a file that does not validate is broken, and its own strict does not
+// count: the unknown fields are ignored and the validation error is returned.
+func LoadConfig(configPath string, warn io.Writer, bestEffort bool) (*SanshainConfig, error) {
 	/* #nosec G304 */
 	data, err := os.ReadFile(configPath)
 	if err != nil {
@@ -94,16 +99,23 @@ func LoadConfig(configPath string, warn io.Writer) (*SanshainConfig, error) {
 		return nil, err
 	}
 
+	config, err := parseAndValidate(data, &doc, filepath.Dir(configPath))
+
 	if unknown := unknownFields(data); len(unknown) > 0 {
-		strict := strictSetting(data)
+		strict := strictSetting(data) && (err == nil || !bestEffort)
 		_, _ = fmt.Fprint(warn, PuzzledCat(unknown, strict))
 		if strict {
 			return nil, ErrUnknownFieldsStrict
 		}
 	}
+	return config, err
+}
 
+// parseAndValidate checks the annotations, parses the config, applies
+// SANSHAIN_URL, validates it and resolves its paths against baseDir.
+func parseAndValidate(data []byte, doc *yaml.Node, baseDir string) (*SanshainConfig, error) {
 	// Before the typed parse, which would turn value: 42 into "42".
-	if err := checkAnnotations(&doc); err != nil {
+	if err := checkAnnotations(doc); err != nil {
 		return nil, err
 	}
 
@@ -122,7 +134,7 @@ func LoadConfig(configPath string, warn io.Writer) (*SanshainConfig, error) {
 		return nil, err
 	}
 
-	resolvePaths(&config, filepath.Dir(configPath))
+	resolvePaths(&config, baseDir)
 
 	return &config, nil
 }

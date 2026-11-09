@@ -46,16 +46,23 @@ func main() {
 
 	command := flag.Arg(0)
 
-	// A broken sanshain.yaml is a configuration error: best effort softens
-	// failed calls only, never this.
-	cfg, err := config.LoadConfig(*configPath, os.Stderr)
+	// A missing or broken sanshain.yaml cannot be trusted to say bestEffort,
+	// so only the flag and SANSHAIN_BEST_EFFORT decide for it: best effort
+	// makes it a warning and exits 0 without a call. Strict is read from the
+	// file only, so it never applies here; unknown fields rejected by the
+	// strict of a file that otherwise loads always fail.
+	outsideBestEffort := resolveBestEffort(*bestEffort, false)
+	cfg, err := config.LoadConfig(*configPath, os.Stderr, outsideBestEffort)
 	if err != nil {
 		if errors.Is(err, config.ErrUnknownFieldsStrict) {
 			fmt.Printf("Error: %v\n", err)
-		} else {
-			fmt.Printf("Error loading config: %v\n", err)
+			os.Exit(1)
 		}
-		os.Exit(1)
+		if err := soften(outsideBestEffort, err); err != nil {
+			fmt.Printf("Error loading config: %v\n", err)
+			os.Exit(1)
+		}
+		return
 	}
 
 	cfg.BestEffort = resolveBestEffort(*bestEffort, cfg.BestEffort)
@@ -104,9 +111,9 @@ func main() {
 	}
 }
 
-// soften reports a failed call as a warning under best effort and returns
-// nil, so the build goes on; a configError, or any error without best
-// effort, is handed back.
+// soften reports a failed call, or a missing or broken sanshain.yaml, as a
+// warning under best effort and returns nil, so the build goes on; a
+// configError, or any error without best effort, is handed back.
 func soften(bestEffort bool, err error) error {
 	var cfgErr *configError
 	if err == nil || !bestEffort || errors.As(err, &cfgErr) {
