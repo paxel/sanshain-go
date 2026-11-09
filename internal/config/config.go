@@ -71,8 +71,8 @@ type SanshainConfig struct {
 }
 
 // ErrUnknownFieldsStrict is returned when strict mode rejects unknown
-// sanshain.yaml fields of a file that otherwise loads. It is a configuration
-// error best-effort never softens.
+// sanshain.yaml fields; under best effort only for a file that otherwise
+// loads. It is a configuration error best-effort never softens.
 var ErrUnknownFieldsStrict = errors.New("strict: sanshain.yaml has unknown fields")
 
 // LoadConfig reads sanshain.yaml. As soon as it parses as YAML, legacy fields
