@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/paxel/sanshain-go/v2/internal/api"
@@ -85,5 +86,13 @@ func TestMain_VersionFlag(t *testing.T) {
 	stdout, _, code := runMain(t, nil, "--version")
 	if code != 0 || stdout != "sanshain-go 2.5.0\n" {
 		t.Errorf("expected 'sanshain-go 2.5.0', got %d %q", code, stdout)
+	}
+}
+
+// The usage names what best effort turns into warnings.
+func TestMain_BestEffortHelp(t *testing.T) {
+	_, stderr, code := runMain(t, nil)
+	if code != 1 || !strings.Contains(stderr, "turn failed calls, and a missing or broken sanshain.yaml, into warnings and exit 0") {
+		t.Errorf("expected the best-effort help in the usage, got %d %q", code, stderr)
 	}
 }

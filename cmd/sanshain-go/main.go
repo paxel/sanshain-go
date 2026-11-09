@@ -21,7 +21,7 @@ const version = "2.5.0"
 func main() {
 	configPath := flag.String("config", "sanshain.yaml", "path to sanshain.yaml")
 	insecure := flag.Bool("insecure", false, "skip SSL certificate verification")
-	bestEffort := flag.Bool("best-effort", false, "continue on errors")
+	bestEffort := flag.Bool("best-effort", false, "turn failed calls, and a missing or broken sanshain.yaml, into warnings and exit 0 (also: SANSHAIN_BEST_EFFORT=true or 1; bestEffort: true in sanshain.yaml counts for failed calls only)")
 	ga := flag.Bool("ga", false, "provide as immutable 'ga' instead of the default 'snapshot'; --ga=false keeps a snapshot despite autoGa (also: SANSHAIN_GA=true or 1, SANSHAIN_GA=false)")
 	trunk := flag.Bool("trunk", false, "this build is trunk's: it maintains the main graph (also: SANSHAIN_TRUNK=true or 1)")
 	tag := flag.String("tag", "", "this build belongs to a sanshain-branch — release/hotfix pipelines (also: SANSHAIN_TAG)")
