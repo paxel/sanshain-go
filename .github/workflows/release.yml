@@ -5,6 +5,10 @@ on:
     tags:
       - 'v*'
 
+# Read-only by default; only the job that creates the GitHub release gets more.
+permissions:
+  contents: read
+
 jobs:
   release:
     name: Create Release
