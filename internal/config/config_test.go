@@ -34,7 +34,7 @@ requires:
         path: /health
 `)
 
-	cfg, err := LoadConfig(path, io.Discard)
+	cfg, err := LoadConfig(path, io.Discard, false)
 	if err != nil {
 		t.Fatalf("LoadConfig failed: %v", err)
 	}
@@ -56,6 +56,19 @@ requires:
 	}
 }
 
+// autoGa is off unless sanshain.yaml says true.
+func TestLoadConfig_AutoGa(t *testing.T) {
+	for yaml, want := range map[string]bool{"": false, "autoGa: true\n": true, "autoGa: false\n": false} {
+		cfg, err := LoadConfig(writeConfig(t, "sanshainUrl: http://x\n"+yaml), io.Discard, false)
+		if err != nil {
+			t.Fatalf("%q: LoadConfig failed: %v", yaml, err)
+		}
+		if cfg.AutoGa != want {
+			t.Errorf("%q: expected autoGa %v, got %v", yaml, want, cfg.AutoGa)
+		}
+	}
+}
+
 func TestLoadConfig_MissingRequireVersion(t *testing.T) {
 	path := writeConfig(t, `
 sanshainUrl: http://localhost:8080
@@ -68,7 +81,7 @@ requires:
         path: /health
 `)
 
-	_, err := LoadConfig(path, io.Discard)
+	_, err := LoadConfig(path, io.Discard, false)
 	if err == nil {
 		t.Fatal("expected error for missing version")
 	}
@@ -178,7 +191,7 @@ releaseBranches:
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			path := writeConfig(t, tc.yaml)
-			_, err := LoadConfig(path, io.Discard)
+			_, err := LoadConfig(path, io.Discard, false)
 			if err == nil {
 				t.Fatal("expected branch-era field to be rejected")
 			}
@@ -222,7 +235,7 @@ provides:
 	if err := os.WriteFile(path, []byte(yaml), 0600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := LoadConfig(path, io.Discard)
+	cfg, err := LoadConfig(path, io.Discard, false)
 	if err != nil {
 		t.Fatalf("a retired entry without a file must parse, got: %v", err)
 	}
@@ -264,7 +277,7 @@ requires:
 		t.Fatal(err)
 	}
 
-	cfg, err := LoadConfig(path, io.Discard)
+	cfg, err := LoadConfig(path, io.Discard, false)
 	if err != nil {
 		t.Fatalf("LoadConfig failed: %v", err)
 	}
@@ -293,7 +306,7 @@ func TestLoadConfig_SanshainURLPrecedence(t *testing.T) {
 
 	t.Run("env beats yaml", func(t *testing.T) {
 		t.Setenv("SANSHAIN_URL", "http://from-env")
-		cfg, err := LoadConfig(withURL, io.Discard)
+		cfg, err := LoadConfig(withURL, io.Discard, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -304,7 +317,7 @@ func TestLoadConfig_SanshainURLPrecedence(t *testing.T) {
 
 	t.Run("yaml used when env unset", func(t *testing.T) {
 		t.Setenv("SANSHAIN_URL", "")
-		cfg, err := LoadConfig(withURL, io.Discard)
+		cfg, err := LoadConfig(withURL, io.Discard, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -315,7 +328,7 @@ func TestLoadConfig_SanshainURLPrecedence(t *testing.T) {
 
 	t.Run("env alone suffices", func(t *testing.T) {
 		t.Setenv("SANSHAIN_URL", "http://from-env")
-		cfg, err := LoadConfig(withoutURL, io.Discard)
+		cfg, err := LoadConfig(withoutURL, io.Discard, false)
 		if err != nil {
 			t.Fatalf("SANSHAIN_URL must satisfy the URL requirement, got %v", err)
 		}
@@ -326,7 +339,7 @@ func TestLoadConfig_SanshainURLPrecedence(t *testing.T) {
 
 	t.Run("neither fails", func(t *testing.T) {
 		t.Setenv("SANSHAIN_URL", "")
-		if _, err := LoadConfig(withoutURL, io.Discard); err == nil {
+		if _, err := LoadConfig(withoutURL, io.Discard, false); err == nil {
 			t.Error("expected an error without any URL")
 		}
 	})
@@ -366,6 +379,11 @@ zzz: 1
 			want: []string{"catalogInf", "provides[1].verison", "requires[0].outputDirectroy", "requires[0].endpoints[2].methd", "zzz"},
 		},
 		{
+			name: "an extra key in an annotation is unknown",
+			yaml: "sanshainUrl: http://x\nannotations:\n  - scope: system\n    name: a\n    value: x\n    label: y\n",
+			want: []string{"annotations[0].label"},
+		},
+		{
 			name: "format on a requires entry is known",
 			yaml: "sanshainUrl: http://x\nrequires:\n  - serviceName: o\n    apiType: asyncapi\n    format: openapi\n",
 			want: nil,
@@ -378,6 +396,7 @@ force: true
 insecure: true
 combine: true
 catalogInfo: catalog-info.yaml
+autoGa: true
 provides:
   - file: a.yaml
     combine: true
@@ -421,7 +440,7 @@ requires:
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("SANSHAIN_URL", "")
 			var warn bytes.Buffer
-			_, err := LoadConfig(writeConfig(t, tc.yaml), &warn)
+			_, err := LoadConfig(writeConfig(t, tc.yaml), &warn, false)
 			want := "sanshain.yaml: unknown field " + tc.field + " - ignored"
 			if !strings.Contains(warn.String(), want) {
 				t.Errorf("expected cat with %q, got %q", want, warn.String())
@@ -436,7 +455,7 @@ requires:
 func TestLoadConfig_StrictUnknownFailsBeforeOtherValidation(t *testing.T) {
 	t.Setenv("SANSHAIN_URL", "")
 	var warn bytes.Buffer
-	_, err := LoadConfig(writeConfig(t, "strict: true\nsanshainUrll: http://x\n"), &warn)
+	_, err := LoadConfig(writeConfig(t, "strict: true\nsanshainUrll: http://x\n"), &warn, false)
 	if !errors.Is(err, ErrUnknownFieldsStrict) {
 		t.Errorf("expected the strict unknown-field error, got %v", err)
 	}
@@ -445,9 +464,36 @@ func TestLoadConfig_StrictUnknownFailsBeforeOtherValidation(t *testing.T) {
 	}
 }
 
+// Under best effort from outside, a file that does not validate is broken:
+// its own strict does not count, and the validation error is returned.
+func TestLoadConfig_BestEffortInvalidFileIgnoresItsStrict(t *testing.T) {
+	t.Setenv("SANSHAIN_URL", "")
+	var warn bytes.Buffer
+	_, err := LoadConfig(writeConfig(t, "strict: true\nsanshainUrll: http://x\n"), &warn, true)
+	if err == nil || errors.Is(err, ErrUnknownFieldsStrict) || err.Error() != "missing required field: sanshainUrl" {
+		t.Errorf("expected the validation error, got %v", err)
+	}
+	if !strings.Contains(warn.String(), "unknown field 'sanshainUrll' - ignored") {
+		t.Errorf("unexpected cat %q", warn.String())
+	}
+}
+
+// Under best effort a file that otherwise validates still fails over unknown
+// fields because of its own strict.
+func TestLoadConfig_BestEffortValidFileKeepsItsStrict(t *testing.T) {
+	var warn bytes.Buffer
+	_, err := LoadConfig(writeConfig(t, "strict: true\nsanshainUrl: http://x\ncatalogInf: x\n"), &warn, true)
+	if !errors.Is(err, ErrUnknownFieldsStrict) {
+		t.Errorf("expected the strict unknown-field error, got %v", err)
+	}
+	if !strings.Contains(warn.String(), "unknown field 'catalogInf' - rejected (strict)") {
+		t.Errorf("unexpected cat %q", warn.String())
+	}
+}
+
 func TestLoadConfig_NoCatWithoutUnknownFields(t *testing.T) {
 	var warn bytes.Buffer
-	if _, err := LoadConfig(writeConfig(t, "sanshainUrl: http://x\nforce: true\ninsecure: true\n"), &warn); err != nil {
+	if _, err := LoadConfig(writeConfig(t, "sanshainUrl: http://x\nforce: true\ninsecure: true\n"), &warn, false); err != nil {
 		t.Fatal(err)
 	}
 	if warn.Len() != 0 {
@@ -458,7 +504,7 @@ func TestLoadConfig_NoCatWithoutUnknownFields(t *testing.T) {
 func TestLoadConfig_LegacyFieldErrorsBeforeUnknownFields(t *testing.T) {
 	var warn bytes.Buffer
 	path := writeConfig(t, "sanshainUrl: http://x\ncatalogInf: a.yaml\nbaseVersion: 3\n")
-	if _, err := LoadConfig(path, &warn); err == nil || !strings.Contains(err.Error(), "'baseVersion' is no longer supported") {
+	if _, err := LoadConfig(path, &warn, false); err == nil || !strings.Contains(err.Error(), "'baseVersion' is no longer supported") {
 		t.Errorf("expected the legacy rejection, got %v", err)
 	}
 	if warn.Len() != 0 {
@@ -478,5 +524,86 @@ func TestPuzzledCat(t *testing.T) {
 	strict := "   /\\_/\\  ?\n  ( O_o )   sanshain.yaml: unknown field 'catalogInf' - rejected (strict)\n ---U-U---\n"
 	if got := PuzzledCat([]string{"catalogInf"}, true); got != strict {
 		t.Errorf("expected\n%s\ngot\n%s", strict, got)
+	}
+}
+
+func TestLoadConfig_Annotations(t *testing.T) {
+	cfg, err := LoadConfig(writeConfig(t, `
+sanshainUrl: http://x
+annotations:
+  - scope: version
+    name: requirements
+    value: "http://solar.system/id-{{AREA}}/requirements/{{ID}}"
+  - scope: system
+    name: jenkins
+    value: "https://jenkins.corp/job/payments"
+`), io.Discard, false)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	want := []Annotation{
+		{Scope: "version", Name: "requirements", Value: "http://solar.system/id-{{AREA}}/requirements/{{ID}}"},
+		{Scope: "system", Name: "jenkins", Value: "https://jenkins.corp/job/payments"},
+	}
+	if len(cfg.Annotations) != 2 || cfg.Annotations[0] != want[0] || cfg.Annotations[1] != want[1] {
+		t.Errorf("expected %v, got %v", want, cfg.Annotations)
+	}
+	for _, yaml := range []string{"", "annotations:\n", "annotations: []\n"} {
+		cfg, err := LoadConfig(writeConfig(t, "sanshainUrl: http://x\n"+yaml), io.Discard, false)
+		if err != nil || len(cfg.Annotations) != 0 {
+			t.Errorf("%q: expected no annotations, got %v, %v", yaml, cfg, err)
+		}
+	}
+}
+
+// A missing field, another type or another scope is a config error naming
+// the entry; nothing is converted.
+func TestLoadConfig_MalformedAnnotation(t *testing.T) {
+	cases := []struct {
+		entries string
+		want    string
+	}{
+		{"\n  - scope: system\n    name: jenkins\n", "annotations[0] (jenkins): missing 'value'"},
+		{"\n  - scope: system\n    value: x\n", "annotations[0]: missing 'name'"},
+		{"\n  - scope: system\n    name: a\n    value: x\n  - name: b\n    value: y\n", "annotations[1] (b): missing 'scope'"},
+		{"\n  - scope: system\n    name: a\n    value:\n", "annotations[0] (a): missing 'value'"},
+		{"\n  - scope: system\n    name: build\n    value: 42\n", "annotations[0] (build): 'value' must be a string"},
+		{"\n  - scope: system\n    name: flag\n    value: true\n", "annotations[0] (flag): 'value' must be a string"},
+		{"\n  - scope: system\n    name: 7\n    value: x\n", "annotations[0]: 'name' must be a string"},
+		{"\n  - scope: system\n    name: l\n    value: [a]\n", "annotations[0] (l): 'value' must be a string"},
+		{"\n  - scope: product\n    name: a\n    value: x\n", "annotations[0] (a): scope 'product' is not supported — use version or system"},
+		{" jenkins\n", "annotations: must be a list of entries with scope, name and value"},
+		{"\n  - jenkins\n", "annotations[0]: must be an entry with scope, name and value"},
+	}
+	for _, tc := range cases {
+		_, err := LoadConfig(writeConfig(t, "sanshainUrl: http://x\nannotations:"+tc.entries), io.Discard, false)
+		if err == nil || err.Error() != tc.want {
+			t.Errorf("%q: expected %q, got %v", tc.entries, tc.want, err)
+		}
+	}
+}
+
+// An unknown apiType is a configuration error at load, on a provide and on a
+// require alike; every accepted spelling loads.
+func TestLoadConfig_UnknownApiType(t *testing.T) {
+	entry := func(provideType, requireType string) string {
+		return "sanshainUrl: http://localhost:3000\nserviceName: svc\nprovides:\n  - file: api.yaml\n    apiType: " + provideType +
+			"\nrequires:\n  - serviceName: users\n    apiType: " + requireType +
+			"\n    version: 1.0.0\n    outputDirectory: gen\n    endpoints:\n      - method: GET\n        path: /x\n"
+	}
+	for _, apiType := range []string{"openapi", "asyncapi", "proto", "grpc"} {
+		if _, err := LoadConfig(writeConfig(t, entry(apiType, apiType)), io.Discard, false); err != nil {
+			t.Errorf("apiType %s must load, got %v", apiType, err)
+		}
+	}
+	cases := map[string]string{
+		"provide[0]: unsupported apiType: raml":          entry("raml", "openapi"),
+		"requires[0] (users): unsupported apiType: raml": entry("openapi", "raml"),
+	}
+	for want, yaml := range cases {
+		_, err := LoadConfig(writeConfig(t, yaml), io.Discard, false)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("expected %q, got %v", want, err)
+		}
 	}
 }

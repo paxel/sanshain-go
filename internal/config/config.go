@@ -41,6 +41,15 @@ type ProvideConfig struct {
 	Retired bool `yaml:"retired,omitempty"`
 }
 
+// Annotation is one annotations entry of sanshain.yaml: a named value
+// Sanshain shows with the provided version (scope version) or with the system
+// (scope system). Its value may hold {{NAME}} placeholders the build fills.
+type Annotation struct {
+	Scope string `yaml:"scope"`
+	Name  string `yaml:"name"`
+	Value string `yaml:"value"`
+}
+
 type SanshainConfig struct {
 	SanshainURL string `yaml:"sanshainUrl"`
 	ServiceName string `yaml:"serviceName"`
@@ -48,6 +57,11 @@ type SanshainConfig struct {
 	Compression bool   `yaml:"compression,omitempty"`
 	BestEffort  bool   `yaml:"bestEffort,omitempty"`
 	Strict      bool   `yaml:"strict,omitempty"`
+	// AutoGa makes a provide GA whenever the build declares trunk or a tag,
+	// unless the --ga flag or SANSHAIN_GA says otherwise.
+	AutoGa bool `yaml:"autoGa,omitempty"`
+	// Annotations as written, placeholders unfilled.
+	Annotations []Annotation `yaml:"annotations,omitempty"`
 	// Path to the project's Backstage catalog-info.yaml, pushed by the
 	// catalog command.
 	CatalogInfo string          `yaml:"catalogInfo,omitempty"`
@@ -57,14 +71,19 @@ type SanshainConfig struct {
 }
 
 // ErrUnknownFieldsStrict is returned when strict mode rejects unknown
-// sanshain.yaml fields. It is a configuration error best-effort never softens.
+// sanshain.yaml fields; under best effort only for a file that otherwise
+// loads. It is a configuration error best-effort never softens.
 var ErrUnknownFieldsStrict = errors.New("strict: sanshain.yaml has unknown fields")
 
 // LoadConfig reads sanshain.yaml. As soon as it parses as YAML, legacy fields
 // are rejected, then unknown fields are reported to warn (the puzzled cat) —
-// failing under strict — and only then is anything else validated, so a typo
-// is named even when it causes a later validation error.
-func LoadConfig(configPath string, warn io.Writer) (*SanshainConfig, error) {
+// failing under strict — before any other error is returned, so a typo is
+// named even when it causes a later validation error.
+//
+// bestEffort is best effort from outside the file (flag or environment). Under
+// it a file that does not validate is broken, and its own strict does not
+// count: the unknown fields are ignored and the validation error is returned.
+func LoadConfig(configPath string, warn io.Writer, bestEffort bool) (*SanshainConfig, error) {
 	/* #nosec G304 */
 	data, err := os.ReadFile(configPath)
 	if err != nil {
@@ -80,12 +99,24 @@ func LoadConfig(configPath string, warn io.Writer) (*SanshainConfig, error) {
 		return nil, err
 	}
 
+	config, err := parseAndValidate(data, &doc, filepath.Dir(configPath))
+
 	if unknown := unknownFields(data); len(unknown) > 0 {
-		strict := strictSetting(data)
+		strict := strictSetting(data) && (err == nil || !bestEffort)
 		_, _ = fmt.Fprint(warn, PuzzledCat(unknown, strict))
 		if strict {
 			return nil, ErrUnknownFieldsStrict
 		}
+	}
+	return config, err
+}
+
+// parseAndValidate checks the annotations, parses the config, applies
+// SANSHAIN_URL, validates it and resolves its paths against baseDir.
+func parseAndValidate(data []byte, doc *yaml.Node, baseDir string) (*SanshainConfig, error) {
+	// Before the typed parse, which would turn value: 42 into "42".
+	if err := checkAnnotations(doc); err != nil {
+		return nil, err
 	}
 
 	var config SanshainConfig
@@ -103,7 +134,7 @@ func LoadConfig(configPath string, warn io.Writer) (*SanshainConfig, error) {
 		return nil, err
 	}
 
-	resolvePaths(&config, filepath.Dir(configPath))
+	resolvePaths(&config, baseDir)
 
 	return &config, nil
 }
@@ -145,7 +176,7 @@ var removedFields = []struct {
 	{"branch", "the branch model was removed in Sanshain 2.0; replace with an exact 'version' pin on each requires entry — provides read the version from the spec file (info.version / // sanshain-version:)"},
 	{"timeout", "Sanshain 2.0 resolves pinned versions immediately and never waits; remove it"},
 	{"baseVersion", "optimistic concurrency was removed in Sanshain 2.0 — GA versions are immutable, snapshots are last-writer-wins; remove it"},
-	{"releaseBranches", "the branch model was removed in Sanshain 2.0; stability is 'snapshot' by default and 'ga' only via SANSHAIN_GA=true or --ga"},
+	{"releaseBranches", "the branch model was removed in Sanshain 2.0; stability is 'snapshot' by default and 'ga' only via SANSHAIN_GA=true, --ga, or autoGa: true on a trunk or tag build"},
 }
 
 func checkRemovedFields(data []byte) error {
@@ -194,6 +225,10 @@ func checkSectionFields(section string, m map[string]any) error {
 	return nil
 }
 
+// apiTypes are the apiType spellings a provide and a require take; empty
+// means openapi, grpc means proto.
+var apiTypes = []string{"", "openapi", "asyncapi", "proto", "grpc"}
+
 func validateConfig(config *SanshainConfig) error {
 	if config.SanshainURL == "" {
 		return fmt.Errorf("missing required field: sanshainUrl")
@@ -203,6 +238,9 @@ func validateConfig(config *SanshainConfig) error {
 	}
 
 	validateProvide := func(p *ProvideConfig, i int) error {
+		if !slices.Contains(apiTypes, p.ApiType) {
+			return fmt.Errorf("provide[%d]: unsupported apiType: %s — use openapi, asyncapi or proto (grpc means proto)", i, p.ApiType)
+		}
 		if p.Retired {
 			// A retire names its family via apiType alone; a file may stay
 			// configured (the spec often still exists on disk) but is unused.
@@ -235,6 +273,9 @@ func validateConfig(config *SanshainConfig) error {
 				"requires[%d] (%s): missing 'version' — Sanshain 2.0 pins exact versions; add version: 1.2.0 (list available: GET /producers/%s/versions)",
 				i, req.ServiceName, req.ServiceName)
 		}
+		if !slices.Contains(apiTypes, req.ApiType) {
+			return fmt.Errorf("requires[%d] (%s): unsupported apiType: %s — use openapi, asyncapi or proto (grpc means proto)", i, req.ServiceName, req.ApiType)
+		}
 		if req.Format != "" && (req.Format != "openapi" || req.ApiType != "asyncapi") {
 			return fmt.Errorf(
 				"requires[%d] (%s): format '%s' with apiType '%s' is not supported — the only allowed combination is 'apiType: asyncapi' with 'format: openapi'",
@@ -260,6 +301,63 @@ func validateConfig(config *SanshainConfig) error {
 	return nil
 }
 
+// checkAnnotations checks the annotations list: every entry has the strings
+// scope (version or system), name and value. A violation names its entry; the
+// size limits are the service's to check, and an extra key is an unknown
+// field, not an error.
+func checkAnnotations(doc *yaml.Node) error {
+	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+		return nil
+	}
+	root := doc.Content[0]
+	var list *yaml.Node
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value == "annotations" {
+			list = root.Content[i+1]
+		}
+	}
+	if list == nil || isNull(list) {
+		return nil
+	}
+	if list.Kind != yaml.SequenceNode {
+		return errors.New("annotations: must be a list of entries with scope, name and value")
+	}
+	for i, entry := range list.Content {
+		if entry.Kind != yaml.MappingNode {
+			return fmt.Errorf("annotations[%d]: must be an entry with scope, name and value", i)
+		}
+		fields := make(map[string]*yaml.Node)
+		for j := 0; j+1 < len(entry.Content); j += 2 {
+			fields[entry.Content[j].Value] = entry.Content[j+1]
+		}
+		context := fmt.Sprintf("annotations[%d]", i)
+		if name := fields["name"]; isString(name) {
+			context += " (" + name.Value + ")"
+		}
+		for _, field := range knownAnnotationFields {
+			node := fields[field]
+			if node == nil || isNull(node) {
+				return fmt.Errorf("%s: missing '%s'", context, field)
+			}
+			if !isString(node) {
+				return fmt.Errorf("%s: '%s' must be a string", context, field)
+			}
+		}
+		if scope := fields["scope"].Value; scope != "version" && scope != "system" {
+			return fmt.Errorf("%s: scope '%s' is not supported — use version or system", context, scope)
+		}
+	}
+	return nil
+}
+
+func isNull(node *yaml.Node) bool {
+	return node.Kind == yaml.ScalarNode && node.ShortTag() == "!!null"
+}
+
+func isString(node *yaml.Node) bool {
+	return node != nil && node.Kind == yaml.ScalarNode && node.ShortTag() == "!!str"
+}
+
 // strictSetting reads just the yaml strict flag, before the full typed
 // parse; a value that is not a boolean counts as off.
 func strictSetting(data []byte) bool {
@@ -274,10 +372,11 @@ func strictSetting(data []byte) bool {
 // knows: a field another client supports is not unknown here, even when this
 // client ignores it.
 var (
-	knownTopFields      = []string{"sanshainUrl", "serviceName", "clientName", "compression", "bestEffort", "strict", "force", "insecure", "combine", "catalogInfo", "provide", "provides", "requires"}
-	knownProvideFields  = []string{"file", "apiType", "retired", "openApiFile", "asyncApiFile", "protoFile", "combine"}
-	knownRequireFields  = []string{"serviceName", "apiType", "version", "outputDirectory", "endpoints", "format"}
-	knownEndpointFields = []string{"method", "path"}
+	knownTopFields        = []string{"sanshainUrl", "serviceName", "clientName", "compression", "bestEffort", "strict", "force", "insecure", "combine", "catalogInfo", "autoGa", "annotations", "provide", "provides", "requires"}
+	knownProvideFields    = []string{"file", "apiType", "retired", "openApiFile", "asyncApiFile", "protoFile", "combine"}
+	knownRequireFields    = []string{"serviceName", "apiType", "version", "outputDirectory", "endpoints", "format"}
+	knownEndpointFields   = []string{"method", "path"}
+	knownAnnotationFields = []string{"scope", "name", "value"}
 )
 
 // unknownFields returns the path of every key no client knows, in file order.
@@ -293,6 +392,8 @@ func unknownFields(data []byte) []string {
 			walkMapping(value, path, knownProvideFields, &found, nil)
 		case "provides":
 			walkSequence(value, path, knownProvideFields, &found, nil)
+		case "annotations":
+			walkSequence(value, path, knownAnnotationFields, &found, nil)
 		case "requires":
 			walkSequence(value, path, knownRequireFields, &found, func(key string, value *yaml.Node, path string) {
 				if key == "endpoints" {

@@ -193,22 +193,22 @@ func TestFormat_BestEffortWarnsAndWritesNothing(t *testing.T) {
 func TestFormat_EtagKeyedPerFormat(t *testing.T) {
 	rs := newRequireServer(t, openapiDoc, `"e-openapi"`, "2.4.0")
 	cfgPath, _ := formatProject(t, rs.URL, singleEntry)
-	cfg, err := config.LoadConfig(cfgPath, &strings.Builder{})
+	cfg, err := config.LoadConfig(cfgPath, &strings.Builder{}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sc := cache.NewSanshainCache(t.TempDir())
 	client := api.NewSanshainClient(rs.URL, "", false)
 
-	if err := handleRequire(client, cfg, sc, api.Stream{}); err != nil {
+	if err := handleRequire(client, cfg, sc, api.Stream{}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := handleRequire(client, cfg, sc, api.Stream{}); err != nil {
+	if err := handleRequire(client, cfg, sc, api.Stream{}, nil); err != nil {
 		t.Fatal(err)
 	}
 	cfg.Requires[0].Format = ""
 	cfg.Requires[0].OutputDirectory = filepath.Join(t.TempDir(), "async")
-	if err := handleRequire(client, cfg, sc, api.Stream{}); err != nil {
+	if err := handleRequire(client, cfg, sc, api.Stream{}, nil); err != nil {
 		t.Fatal(err)
 	}
 

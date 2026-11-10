@@ -1,49 +1,57 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
 
-func TestResolveStability(t *testing.T) {
-	t.Run("default is snapshot", func(t *testing.T) {
-		t.Setenv("SANSHAIN_GA", "")
-		if got := resolveStability(false); got != "snapshot" {
-			t.Errorf("expected snapshot by default, got %s", got)
-		}
-	})
+	"github.com/paxel/sanshain-go/v2/internal/api"
+)
 
-	t.Run("ga flag switches to ga", func(t *testing.T) {
-		t.Setenv("SANSHAIN_GA", "")
-		if got := resolveStability(true); got != "ga" {
-			t.Errorf("expected ga with --ga flag, got %s", got)
-		}
-	})
+func ptr(b bool) *bool { return &b }
 
-	t.Run("SANSHAIN_GA=true switches to ga", func(t *testing.T) {
-		t.Setenv("SANSHAIN_GA", "true")
-		if got := resolveStability(false); got != "ga" {
-			t.Errorf("expected ga with SANSHAIN_GA=true, got %s", got)
-		}
-	})
-
-	t.Run("SANSHAIN_GA=false stays snapshot", func(t *testing.T) {
-		t.Setenv("SANSHAIN_GA", "false")
-		if got := resolveStability(false); got != "snapshot" {
-			t.Errorf("expected snapshot with SANSHAIN_GA=false, got %s", got)
-		}
-	})
-
-	t.Run("flag wins even when env is false", func(t *testing.T) {
-		t.Setenv("SANSHAIN_GA", "false")
-		if got := resolveStability(true); got != "ga" {
-			t.Errorf("expected ga when --ga is set regardless of env, got %s", got)
-		}
-	})
+// The autoGa table every Sanshain client tests: autoGa, the declared stream,
+// the --ga flag and SANSHAIN_GA, and the stability they resolve to.
+func TestResolveStability_AutoGa(t *testing.T) {
+	declared := func(trunk bool, tag string) bool {
+		stream, warning := api.ResolveStream(trunk, tag, "", "")
+		return streamDeclared(stream, warning)
+	}
+	trunk, tag, none, both := declared(true, ""), declared(false, "release-1"), declared(false, ""), declared(true, "release-1")
+	cases := []struct {
+		name     string
+		autoGa   bool
+		declared bool
+		flag     *bool
+		env      string
+		want     string
+	}{
+		{"autoGa on trunk", true, trunk, nil, "", "ga"},
+		{"autoGa on a tag", true, tag, nil, "", "ga"},
+		{"autoGa without a stream", true, none, nil, "", "snapshot"},
+		{"SANSHAIN_GA=false beats autoGa", true, trunk, nil, "false", "snapshot"},
+		{"--ga=false beats autoGa", true, trunk, ptr(false), "", "snapshot"},
+		{"autoGa off on trunk", false, trunk, nil, "", "snapshot"},
+		{"SANSHAIN_GA=true without autoGa", false, none, nil, "true", "ga"},
+		{"--ga beats SANSHAIN_GA=false", true, none, ptr(true), "false", "ga"},
+		// Both trunk and a tag send neither, but still declared a stream.
+		{"autoGa on trunk and a tag", true, both, nil, "", "ga"},
+		{"--ga=false beats SANSHAIN_GA=true", false, none, ptr(false), "true", "snapshot"},
+		{"nothing set is a snapshot", false, none, nil, "", "snapshot"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := resolveStability(tc.flag, tc.env, tc.autoGa, tc.declared); got != tc.want {
+				t.Errorf("got %s, want %s", got, tc.want)
+			}
+		})
+	}
 }
 
+// A blank SANSHAIN_GA is unset; any other value is read like every switch.
 func TestResolveStability_EnvSwitchSpellings(t *testing.T) {
-	for value, want := range map[string]string{"1": "ga", "TRUE": "ga", " true ": "ga", "yes": "snapshot"} {
-		t.Setenv("SANSHAIN_GA", value)
-		if got := resolveStability(false); got != want {
-			t.Errorf("SANSHAIN_GA=%q: got %s, want %s", value, got, want)
+	for value, want := range map[string]string{"1": "ga", "TRUE": "ga", " true ": "ga", "yes": "snapshot", "0": "snapshot", "": "ga", " ": "ga"} {
+		if got := resolveStability(nil, value, true, true); got != want {
+			t.Errorf("SANSHAIN_GA=%q with autoGa on trunk: got %s, want %s", value, got, want)
 		}
 	}
 }
@@ -76,7 +84,15 @@ func TestResolveBestEffort(t *testing.T) {
 
 func TestMain_VersionFlag(t *testing.T) {
 	stdout, _, code := runMain(t, nil, "--version")
-	if code != 0 || stdout != "sanshain-go 2.4.0\n" {
-		t.Errorf("expected 'sanshain-go 2.4.0', got %d %q", code, stdout)
+	if code != 0 || stdout != "sanshain-go 2.5.0\n" {
+		t.Errorf("expected 'sanshain-go 2.5.0', got %d %q", code, stdout)
+	}
+}
+
+// The usage names what best effort turns into warnings.
+func TestMain_BestEffortHelp(t *testing.T) {
+	_, stderr, code := runMain(t, nil)
+	if code != 1 || !strings.Contains(stderr, "turn failed calls, and a missing or broken sanshain.yaml, into warnings and exit 0") {
+		t.Errorf("expected the best-effort help in the usage, got %d %q", code, stderr)
 	}
 }

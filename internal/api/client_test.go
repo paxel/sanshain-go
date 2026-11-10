@@ -402,7 +402,7 @@ func TestRequireWithEtag_StreamRidesTheQuery(t *testing.T) {
 	defer ts.Close()
 	client := NewSanshainClient(ts.URL, "", false)
 
-	_, err := client.RequireWithEtag("c", "p", "1.0.0", "/x", "GET", false, "", "", Stream{Trunk: true}, "")
+	_, err := client.RequireWithEtag("c", "p", "1.0.0", "/x", "GET", false, "", "", Stream{Trunk: true}, "", nil)
 	if err != nil {
 		t.Fatalf("require failed: %v", err)
 	}
@@ -410,12 +410,12 @@ func TestRequireWithEtag_StreamRidesTheQuery(t *testing.T) {
 		t.Errorf("trunk must ride the query on the single require, got %v", gotQuery)
 	}
 
-	_, _ = client.RequireWithEtag("c", "p", "1.0.0", "/x", "GET", false, "", "", Stream{Tag: "R"}, "")
+	_, _ = client.RequireWithEtag("c", "p", "1.0.0", "/x", "GET", false, "", "", Stream{Tag: "R"}, "", nil)
 	if got := gotQuery["tag"]; len(got) != 1 || got[0] != "R" {
 		t.Errorf("tag must ride the query, got %v", gotQuery)
 	}
 
-	_, _ = client.RequireWithEtag("c", "p", "1.0.0", "/x", "GET", false, "", "", Stream{}, "")
+	_, _ = client.RequireWithEtag("c", "p", "1.0.0", "/x", "GET", false, "", "", Stream{}, "", nil)
 	if _, present := gotQuery["trunk"]; present {
 		t.Error("an undeclared stream must not send trunk")
 	}
@@ -519,8 +519,35 @@ func TestProvide_ForbiddenNamesTheReleaserRole(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a refusal")
 	}
-	if !strings.Contains(err.Error(), "releaser") || !strings.Contains(err.Error(), "snapshot") {
+	if !strings.Contains(err.Error(), "releaser") || !strings.Contains(err.Error(), "snapshot") ||
+		!strings.Contains(err.Error(), "autoGa off") || !strings.Contains(err.Error(), "SANSHAIN_GA=false") {
 		t.Errorf("the refusal names the role and the fallback, got: %v", err)
+	}
+}
+
+const readOnlyRefusal = "this API token has scope 'read_only' and may not change the catalog; create a token with scope 'full' for provide, require and catalog pushes"
+
+// Only the releaser refusal gets the releaser hint; any other 403, a
+// read-only token's among them, shows the service's message alone.
+func TestForbidden_WithoutTheReleaserReasonShowsTheServiceMessageOnly(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/version" {
+			serveVersion(w, "2.13.0")
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":"` + readOnlyRefusal + `"}`))
+	}))
+	defer ts.Close()
+	client := NewSanshainClient(ts.URL, "", false)
+
+	_, err := client.Provide(ProvidePayload{ProducerName: "svc", OpenApiYaml: "x", Stability: "snapshot"}, false)
+	if err == nil || err.Error() != "provide refused (403): "+readOnlyRefusal {
+		t.Errorf("expected the service's message alone, got: %v", err)
+	}
+	_, err = client.Retire("svc", "openapi", false)
+	if err == nil || err.Error() != "retire refused (403): "+readOnlyRefusal {
+		t.Errorf("expected the service's message alone, got: %v", err)
 	}
 }
 
@@ -587,7 +614,7 @@ func TestPushCatalog_PutsCompressedPayload(t *testing.T) {
 	defer ts.Close()
 
 	client := NewSanshainClient(ts.URL, "tok", false)
-	resp, err := client.PushCatalog("a/b", "kind: Component", false, true)
+	resp, err := client.PushCatalog("a/b", "kind: Component", false, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -621,7 +648,7 @@ func TestPushCatalog_400IsGenericFailure(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	_, err := NewSanshainClient(ts.URL, "", false).PushCatalog("svc", "x", false, false)
+	_, err := NewSanshainClient(ts.URL, "", false).PushCatalog("svc", "x", false, false, nil)
 	if err == nil || !strings.Contains(err.Error(), "request failed with status 400") {
 		t.Errorf("expected the generic 400 mapping, got %v", err)
 	}
@@ -638,7 +665,7 @@ func TestPushCatalog_Recorded(t *testing.T) {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write([]byte(body))
 		}))
-		resp, err := NewSanshainClient(ts.URL, "", false).PushCatalog("s", "x", false, false)
+		resp, err := NewSanshainClient(ts.URL, "", false).PushCatalog("s", "x", false, false, nil)
 		ts.Close()
 		if err != nil || resp.Recorded != want {
 			t.Errorf("%s: expected recorded=%v, got %+v, %v", body, want, resp, err)
@@ -678,12 +705,12 @@ func TestTakeWarnings_EveryCallEveryStatus(t *testing.T) {
 		"retire":  func(c *SanshainClient) { _, _ = c.Retire("p", "openapi", false) },
 		"require": func(c *SanshainClient) { _, _ = c.Require("c", "p", "1.0.0", "/x", "GET", false, "") },
 		"require etag": func(c *SanshainClient) {
-			_, _ = c.RequireWithEtag("c", "p", "1.0.0", "/x", "GET", false, "", "\"e\"", Stream{}, "")
+			_, _ = c.RequireWithEtag("c", "p", "1.0.0", "/x", "GET", false, "", "\"e\"", Stream{}, "", nil)
 		},
 		"bundle": func(c *SanshainClient) {
 			_, _ = c.RequireBundle(RequireBundlePayload{ConsumerName: "c", ProducerName: "p", Version: "1.0.0"}, false)
 		},
-		"catalog": func(c *SanshainClient) { _, _ = c.PushCatalog("s", "x", false, false) },
+		"catalog": func(c *SanshainClient) { _, _ = c.PushCatalog("s", "x", false, false, nil) },
 	}
 	for _, status := range []int{http.StatusOK, http.StatusNotModified, http.StatusBadRequest} {
 		ts := warningServer(t, status, `{"system":"s","recorded":false}`)

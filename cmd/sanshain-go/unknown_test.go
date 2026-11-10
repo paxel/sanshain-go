@@ -61,21 +61,50 @@ func TestMain_LegacyFieldStillErrorsBeforeCat(t *testing.T) {
 	}
 }
 
-// A config that fails validation falls back to an empty config under
-// best-effort, and the cat still names the typo.
-func TestMain_BestEffortFallbackStillShowsCat(t *testing.T) {
+// A config that fails validation is a warning under best effort, and the cat
+// still names the typo first.
+func TestMain_BestEffortInvalidConfigStillShowsCat(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "sanshain.yaml")
 	writeFile(t, cfgPath, "sanshainUrll: http://127.0.0.1:1\nserviceName: svc\n")
 
 	stdout, stderr, code := runMain(t, nil, "--config", cfgPath, "--best-effort", "require")
 	if code != 0 {
-		t.Fatalf("expected exit 0 under best-effort, got %d: %s", code, stdout)
+		t.Fatalf("expected an invalid config to be a warning under best-effort: %s", stdout)
 	}
 	if !strings.Contains(stderr, "sanshain.yaml: unknown field 'sanshainUrll' - ignored") {
 		t.Errorf("expected the cat on stderr, got %q", stderr)
 	}
-	if !strings.Contains(stdout, "Warning loading config: missing required field: sanshainUrl") {
-		t.Errorf("expected the config warning after the cat, got %q", stdout)
+	if stdout != "Warning: missing required field: sanshainUrl\n" {
+		t.Errorf("expected the config error as a warning, got %q", stdout)
+	}
+}
+
+// A file that does not validate is broken: under best effort its own strict
+// does not turn its unknown fields into a failure.
+func TestMain_BestEffortInvalidConfigIgnoresItsStrict(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "sanshain.yaml")
+	writeFile(t, cfgPath, "strict: true\nsanshainUrll: http://127.0.0.1:1\nserviceName: svc\n")
+
+	for _, env := range [][]string{{"SANSHAIN_BEST_EFFORT=true"}, nil} {
+		args := []string{"--config", cfgPath, "provide"}
+		if env == nil {
+			args = append([]string{"--best-effort"}, args...)
+		}
+		stdout, stderr, code := runMain(t, env, args...)
+		if code != 0 || stdout != "Warning: missing required field: sanshainUrl\n" {
+			t.Errorf("expected the config error as a warning and exit 0, got %d %q", code, stdout)
+		}
+		if !strings.Contains(stderr, "unknown field 'sanshainUrll' - ignored") {
+			t.Errorf("expected the cat to ignore the field, got %q", stderr)
+		}
+	}
+
+	stdout, stderr, code := runMain(t, nil, "--config", cfgPath, "provide")
+	if code != 1 || stdout != "Error: strict: sanshain.yaml has unknown fields\n" {
+		t.Errorf("expected the strict failure without best effort, got %d %q", code, stdout)
+	}
+	if !strings.Contains(stderr, "unknown field 'sanshainUrll' - rejected (strict)") {
+		t.Errorf("expected the cat to reject the field, got %q", stderr)
 	}
 }
 

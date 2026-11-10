@@ -35,6 +35,8 @@ type ProvidePayload struct {
 	Tag   string `json:"tag,omitempty"`
 	// Why this build provides; flattened, each field omitted when unset.
 	Origin
+	// Every annotation of the build, both scopes; omitted when none.
+	Annotations []Annotation `json:"annotations,omitempty"`
 }
 
 type ProvideAsyncApiPayload struct {
@@ -45,6 +47,7 @@ type ProvideAsyncApiPayload struct {
 	Trunk        bool   `json:"trunk,omitempty"`
 	Tag          string `json:"tag,omitempty"`
 	Origin
+	Annotations []Annotation `json:"annotations,omitempty"`
 }
 
 type ProvideProtoPayload struct {
@@ -55,11 +58,12 @@ type ProvideProtoPayload struct {
 	Trunk        bool   `json:"trunk,omitempty"`
 	Tag          string `json:"tag,omitempty"`
 	Origin
+	Annotations []Annotation `json:"annotations,omitempty"`
 }
 
 // RetirePayload declares that the Producer no longer provides an API family —
 // an ordinary provide call carrying `retired: true` and no document. It has no
-// field for a body, a stability or a stream: the server answers 400 for a
+// field for a body, a stability, a stream or annotations: the server answers 400 for a
 // request that says both, and a payload that cannot express the contradiction
 // cannot send it.
 type RetirePayload struct {
@@ -157,6 +161,9 @@ type RequireBundlePayload struct {
 	// ("openapi" for an AsyncAPI require). It travels on the query string,
 	// not in the body.
 	Format string `json:"-"`
+	// The system annotations of the requiring Consumer; a version one is
+	// never sent here. Omitted when none.
+	Annotations []Annotation `json:"annotations,omitempty"`
 }
 
 // Stream names which dependency graph a build's calls belong to: trunk, one
@@ -232,6 +239,10 @@ type SanshainClient struct {
 	// warnings are the Sanshain-Warning header lines received since the
 	// last TakeWarnings.
 	warnings []string
+
+	// annotationsRefused is set once the service refused annotations: later
+	// calls send none.
+	annotationsRefused bool
 }
 
 // TakeWarnings returns the Sanshain-Warning header lines received since the
@@ -270,14 +281,35 @@ func NewSanshainClient(baseURL, token string, insecure bool) *SanshainClient {
 }
 
 func (c *SanshainClient) Provide(payload ProvidePayload, compression bool) (*ProvideResponse, error) {
-	resp, err := c.postProvide("/provide", payload, compression)
-	if errors.Is(err, errOriginRefused) && !payload.IsZero() {
-		warnOriginDropped()
-		payload.Origin = Origin{}
-		return c.postProvide("/provide", payload, compression)
-	}
-	return resp, err
+	return c.provideDropping("/provide", &payload, &payload.Origin, &payload.Annotations, compression)
 }
+
+// provideDropping posts a provide payload (a pointer to it, with pointers to
+// its origin and annotations). An older service refuses a field it does not
+// know by name, one field per answer: annotations before 2.13.0, the origin
+// before 2.9.0. The provide must not fail for a fact the service cannot store,
+// so each refusal drops that field and repeats it; a 2.8 service refuses both,
+// in either order.
+func (c *SanshainClient) provideDropping(path string, payload any, origin *Origin, annotations *[]Annotation, compression bool) (*ProvideResponse, error) {
+	*annotations = c.annotationsToSend(*annotations, true)
+	for {
+		resp, err := c.postProvide(path, payload, compression)
+		switch {
+		case errors.Is(err, errAnnotationsRefused) && len(*annotations) > 0:
+			c.refuseAnnotations()
+			*annotations = nil
+		case errors.Is(err, errOriginRefused) && !origin.IsZero():
+			warnOriginDropped()
+			*origin = Origin{}
+		default:
+			return resp, err
+		}
+	}
+}
+
+// errAnnotationsRefused is a 422 naming annotations as the unknown field: the
+// service predates them (before 2.13.0).
+var errAnnotationsRefused = errors.New("the service does not take annotations")
 
 // errOriginRefused is a 422 naming an origin field as unknown: the service
 // predates the origin (before 2.9.0). The provide itself must not fail for a
@@ -299,23 +331,11 @@ func warnOriginDropped() {
 }
 
 func (c *SanshainClient) ProvideAsyncApi(payload ProvideAsyncApiPayload, compression bool) (*ProvideResponse, error) {
-	resp, err := c.postProvide("/provide/asyncapi", payload, compression)
-	if errors.Is(err, errOriginRefused) && !payload.IsZero() {
-		warnOriginDropped()
-		payload.Origin = Origin{}
-		return c.postProvide("/provide/asyncapi", payload, compression)
-	}
-	return resp, err
+	return c.provideDropping("/provide/asyncapi", &payload, &payload.Origin, &payload.Annotations, compression)
 }
 
 func (c *SanshainClient) ProvideProto(payload ProvideProtoPayload, compression bool) (*ProvideResponse, error) {
-	resp, err := c.postProvide("/provide/grpc", payload, compression)
-	if errors.Is(err, errOriginRefused) && !payload.IsZero() {
-		warnOriginDropped()
-		payload.Origin = Origin{}
-		return c.postProvide("/provide/grpc", payload, compression)
-	}
-	return resp, err
+	return c.provideDropping("/provide/grpc", &payload, &payload.Origin, &payload.Annotations, compression)
 }
 
 // Retire declares that the Producer no longer provides the given API family.
@@ -430,11 +450,22 @@ func (c *SanshainClient) provideFailure(resp *http.Response, body string) error 
 	// remedy is a role grant — nothing the Producer can change in its own
 	// repository. Naming it is the whole value of catching this status.
 	if resp.StatusCode == http.StatusForbidden {
+		if !namesReleaserRole(eb.Error) {
+			return fmt.Errorf("provide refused (403): %s", eb.Error)
+		}
 		return fmt.Errorf(
-			"provide refused (403): %s\n  Publishing a GA version requires the 'releaser' role. Grant it to the user or token this build authenticates as (administrators and root always hold it), or publish as a snapshot by leaving --ga / SANSHAIN_GA unset",
+			"provide refused (403): %s\n  Publishing a GA version requires the 'releaser' role. Grant it to the user or token this build authenticates as (administrators and root always hold it), or publish as a snapshot by leaving --ga / SANSHAIN_GA unset and autoGa off (or setting SANSHAIN_GA=false)",
 			eb.Error)
 	}
 	return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, sanitize(body))
+}
+
+// namesReleaserRole reports whether a 403 is the service's refusal for a
+// caller without the releaser role. Its body carries no code, only the
+// sentence ("… requires the 'releaser' role …"); every other 403, a read-only
+// token's among them, is shown as the service wrote it.
+func namesReleaserRole(message string) bool {
+	return strings.Contains(message, "requires the 'releaser' role")
 }
 
 // retireFailure names both ways into the retire gate — the releaser role a
@@ -446,6 +477,9 @@ func (c *SanshainClient) retireFailure(resp *http.Response, body, producerName s
 	eb := parseErrorBody(body)
 	switch resp.StatusCode {
 	case http.StatusForbidden:
+		if !namesReleaserRole(eb.Error) {
+			return fmt.Errorf("retire refused (403): %s", eb.Error)
+		}
 		return fmt.Errorf(
 			"retire refused (403): %s\n  Retiring an API family requires the 'releaser' role — which a release pipeline already holds — or a maintainer grant on '%s'. Administrators and root hold both",
 			eb.Error, producerName)
@@ -527,6 +561,11 @@ func (c *SanshainClient) postProvide(path string, payload any, compression bool)
 		return nil, err
 	}
 
+	// Annotations first: the refusal of a 2.9–2.12 service lists the
+	// origin fields among those it expects.
+	if resp.StatusCode == http.StatusUnprocessableEntity && annotationsFieldRefused(respBody) {
+		return nil, errAnnotationsRefused
+	}
 	if resp.StatusCode == http.StatusUnprocessableEntity && originFieldRefused(respBody) {
 		return nil, errOriginRefused
 	}
@@ -547,6 +586,8 @@ func (c *SanshainClient) postProvide(path string, payload any, compression bool)
 type CatalogPushPayload struct {
 	CatalogInfoYaml string `json:"catalog_info_yaml"`
 	Trunk           bool   `json:"trunk,omitempty"`
+	// The system annotations; omitted when none.
+	Annotations []Annotation `json:"annotations,omitempty"`
 }
 
 // CatalogPushResponse is the periphery the server now records for a system.
@@ -559,10 +600,11 @@ type CatalogPushResponse struct {
 	Recorded  bool     `json:"recorded"`
 }
 
-// PushCatalog sends the system's Backstage catalog-info.yaml. It needs
-// Sanshain Service 2.4.0 or later; an older server answers 404.
-func (c *SanshainClient) PushCatalog(systemName, catalogInfoYaml string, trunk, compression bool) (*CatalogPushResponse, error) {
-	payload := CatalogPushPayload{CatalogInfoYaml: catalogInfoYaml, Trunk: trunk}
+// PushCatalog sends the system's Backstage catalog-info.yaml, with the
+// system ones of annotations. It needs Sanshain Service 2.4.0 or later; an
+// older server answers 404.
+func (c *SanshainClient) PushCatalog(systemName, catalogInfoYaml string, trunk, compression bool, annotations []Annotation) (*CatalogPushResponse, error) {
+	payload := CatalogPushPayload{CatalogInfoYaml: catalogInfoYaml, Trunk: trunk, Annotations: c.annotationsToSend(annotations, false)}
 	resp, err := c.send(http.MethodPut, "/catalog/"+url.PathEscape(systemName), payload, compression, nil)
 	if err != nil {
 		return nil, err
@@ -574,6 +616,9 @@ func (c *SanshainClient) PushCatalog(systemName, catalogInfoYaml string, trunk, 
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if c.refusedAnnotations(payload.Annotations, resp.StatusCode, http.StatusUnprocessableEntity, body) {
+			return c.PushCatalog(systemName, catalogInfoYaml, trunk, compression, nil)
+		}
 		return nil, c.catalogFailure(resp, body)
 	}
 
@@ -602,7 +647,7 @@ func (c *SanshainClient) catalogFailure(resp *http.Response, body string) error 
 }
 
 func (c *SanshainClient) Require(consumerName, producerName, version, path, method string, dryRun bool, apiType string) (string, error) {
-	result, err := c.RequireWithEtag(consumerName, producerName, version, path, method, dryRun, apiType, "", Stream{}, "")
+	result, err := c.RequireWithEtag(consumerName, producerName, version, path, method, dryRun, apiType, "", Stream{}, "", nil)
 	if err != nil {
 		return "", err
 	}
@@ -610,8 +655,10 @@ func (c *SanshainClient) Require(consumerName, producerName, version, path, meth
 }
 
 // RequireWithEtag requires one endpoint. A non-empty format ("openapi")
-// asks for the endpoint in that document format.
-func (c *SanshainClient) RequireWithEtag(consumerName, producerName, version, reqPath, method string, dryRun bool, apiType string, etag string, stream Stream, format string) (*RequireResult, error) {
+// asks for the endpoint in that document format. The system ones of
+// annotations travel as the annotations query parameter, a JSON array.
+func (c *SanshainClient) RequireWithEtag(consumerName, producerName, version, reqPath, method string, dryRun bool, apiType string, etag string, stream Stream, format string, annotations []Annotation) (*RequireResult, error) {
+	annotations = c.annotationsToSend(annotations, false)
 	endpoint := "/require"
 	switch apiType {
 	case "asyncapi":
@@ -644,6 +691,13 @@ func (c *SanshainClient) RequireWithEtag(consumerName, producerName, version, re
 	if format != "" {
 		q.Set("format", format)
 	}
+	if len(annotations) > 0 {
+		encoded, err := json.Marshal(annotations)
+		if err != nil {
+			return nil, err
+		}
+		q.Set("annotations", string(encoded))
+	}
 	u.RawQuery = q.Encode()
 
 	req, err := http.NewRequest("GET", u.String(), nil)
@@ -673,6 +727,12 @@ func (c *SanshainClient) RequireWithEtag(consumerName, producerName, version, re
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// A service before 2.13.0 refuses the unknown query parameter with a
+		// 400 — checked before the format refusal, since it lists format
+		// among the fields it expects.
+		if c.refusedAnnotations(annotations, resp.StatusCode, http.StatusBadRequest, body) {
+			return c.RequireWithEtag(consumerName, producerName, version, reqPath, method, dryRun, apiType, etag, stream, format, nil)
+		}
 		if err := c.formatRejected(format, resp, body); err != nil {
 			return nil, err
 		}
@@ -697,6 +757,7 @@ func (c *SanshainClient) RequireBundle(payload RequireBundlePayload, compression
 
 func (c *SanshainClient) RequireBundleWithEtag(payload RequireBundlePayload, compression bool, etag string) (*RequireResult, error) {
 	payload.ApiType = cmp.Or(payload.ApiType, "openapi")
+	payload.Annotations = c.annotationsToSend(payload.Annotations, false)
 	headers := make(http.Header)
 	if etag != "" {
 		headers.Set("If-None-Match", etag)
@@ -722,6 +783,10 @@ func (c *SanshainClient) RequireBundleWithEtag(payload RequireBundlePayload, com
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if c.refusedAnnotations(payload.Annotations, resp.StatusCode, http.StatusUnprocessableEntity, respBody) {
+			payload.Annotations = nil
+			return c.RequireBundleWithEtag(payload, compression, etag)
+		}
 		if err := c.formatRejected(payload.Format, resp, respBody); err != nil {
 			return nil, err
 		}
