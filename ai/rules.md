@@ -23,7 +23,7 @@ After any code modification, the following checks MUST be executed locally. A ta
 
 - **KISS (Keep It Simple, Stupid)**: Avoid over-engineering. Prefer straightforward, readable code over complex abstractions.
 - **Single Responsibility**: Each package and function should have one clear purpose.
-- **Go Idioms**: Follow modern Go idioms (Go 1.23+).
+- **Go Idioms**: Follow modern Go idioms (Go 1.26+).
     - Use `any` instead of `interface{}`.
     - Use `errors.Is`/`errors.As` for error handling.
     - Use `slices.Contains`, `maps.Keys`, etc., from the standard library.
