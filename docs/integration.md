@@ -47,7 +47,7 @@ You can use `go generate` to trigger the download of API dependencies and subseq
 ### GitLab CI
 ```yaml
 generate-api:
-  image: golang:1.23
+  image: golang:1.26
   script:
     - go install github.com/paxel/sanshain-go/v2/cmd/sanshain-go@latest
     - sanshain-go require
