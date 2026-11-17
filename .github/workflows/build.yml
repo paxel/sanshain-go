@@ -32,7 +32,7 @@ jobs:
           version: latest
 
       - name: Security scan
-        uses: securego/gosec@6d98968a868f856680ae994e88ff190d236790c0 # master branch
+        uses: securego/gosec@244f1f6f4d1d0d14f89e79a73dab1219eabb5228 # master branch
         with:
           args: ./...
 
