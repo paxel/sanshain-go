@@ -40,17 +40,23 @@ func NewSanshainCache(cacheDir string) *SanshainCache {
 }
 
 func (c *SanshainCache) load() {
-	c.State = State{
-		Requires: make(map[string]*RequireEntry),
-	}
 	data, err := os.ReadFile(c.cacheFile)
 	if err != nil {
+		c.State = State{Requires: make(map[string]*RequireEntry)}
 		return
 	}
-	_ = json.Unmarshal(data, &c.State)
-	if c.State.Requires == nil {
-		c.State.Requires = make(map[string]*RequireEntry)
+	c.State = decodeState(data)
+}
+
+// decodeState reads the content of the state file. What cannot be read counts
+// as absent, so the state always has its map of requires.
+func decodeState(data []byte) State {
+	state := State{Requires: make(map[string]*RequireEntry)}
+	_ = json.Unmarshal(data, &state)
+	if state.Requires == nil {
+		state.Requires = make(map[string]*RequireEntry)
 	}
+	return state
 }
 
 // Save writes the state file, creating its directory.

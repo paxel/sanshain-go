@@ -6,4 +6,4 @@
 [[parts]]
 name = "go"
 lcov = "coverage/go.lcov"
-floor = 84.40
+floor = 86.88

@@ -271,8 +271,14 @@ func (c *SanshainClient) do(req *http.Request) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	c.warnings = append(c.warnings, resp.Header.Values("Sanshain-Warning")...)
+	c.warnings = append(c.warnings, warningLines(resp.Header)...)
 	return resp, nil
+}
+
+// warningLines returns the Sanshain-Warning lines of a response's headers, in
+// order.
+func warningLines(header http.Header) []string {
+	return header.Values("Sanshain-Warning")
 }
 
 // NewSanshainClient returns a client for the service at baseURL. insecure
@@ -589,8 +595,13 @@ func (c *SanshainClient) postProvide(path string, payload any, compression bool)
 		return nil, c.provideFailure(resp, respBody)
 	}
 
+	return decodeProvideResponse(respBody)
+}
+
+// decodeProvideResponse reads the body of a successful provide.
+func decodeProvideResponse(body string) (*ProvideResponse, error) {
 	var provideResp ProvideResponse
-	if err := json.Unmarshal([]byte(respBody), &provideResp); err != nil {
+	if err := json.Unmarshal([]byte(body), &provideResp); err != nil {
 		return nil, err
 	}
 	return &provideResp, nil

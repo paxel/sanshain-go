@@ -95,7 +95,12 @@ func LoadConfig(configPath string, warn io.Writer, bestEffort bool) (*SanshainCo
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
+	return parseConfig(data, filepath.Dir(configPath), warn, bestEffort)
+}
 
+// parseConfig is LoadConfig for the content of sanshain.yaml: data is the
+// file, baseDir the directory its relative paths are resolved against.
+func parseConfig(data []byte, baseDir string, warn io.Writer, bestEffort bool) (*SanshainConfig, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
@@ -105,7 +110,7 @@ func LoadConfig(configPath string, warn io.Writer, bestEffort bool) (*SanshainCo
 		return nil, err
 	}
 
-	config, err := parseAndValidate(data, &doc, filepath.Dir(configPath))
+	config, err := parseAndValidate(data, &doc, baseDir)
 
 	if unknown := unknownFields(data); len(unknown) > 0 {
 		strict := strictSetting(data) && (err == nil || !bestEffort)
