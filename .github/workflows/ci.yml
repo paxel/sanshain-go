@@ -1,0 +1,39 @@
+name: CI
+
+# sanshain-go's gates, all from paxel/gates: the OSV gate, the Go gate (gofmt, golangci-lint,
+# tests under the race detector, coverage ratchet) and SonarQube Cloud.
+# A branch gets its run through its pull request; a run per push as well would be the same
+# jobs twice, and SonarQube Cloud analyses only the default branch and pull requests.
+on:
+  push:
+    branches: [summer]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Known vulnerabilities and licences of every dependency: osv-scanner decided by gates'
+  # osv_gate.py. What is accepted stands in osv-scanner.toml.
+  vulns:
+    uses: paxel/gates/.github/workflows/vulns.yml@e5e253a7caff277f039fb31a3e6be1479682dcc4 # v1.2.0
+
+  # On the Go release the toolchain line of go.mod pins. The tests run on Linux; the release
+  # also ships binaries for macOS and Windows, so the code is built and vetted for those.
+  go:
+    uses: paxel/gates/.github/workflows/go.yml@e5e253a7caff277f039fb31a3e6be1479682dcc4 # v1.2.0
+    with:
+      cross: |
+        darwin/amd64
+        darwin/arm64
+        windows/amd64
+
+  sonar:
+    needs: go
+    uses: paxel/gates/.github/workflows/sonar.yml@e5e253a7caff277f039fb31a3e6be1479682dcc4 # v1.2.0
+    secrets:
+      sonar-token: ${{ secrets.SQ_TOKEN }}

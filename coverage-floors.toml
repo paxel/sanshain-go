@@ -1,0 +1,9 @@
+# The coverage ratchet (paxel/gates coverage_ratchet.py): one part per measured module. CI
+# writes coverage/go.lcov and fails below the floor. After a rise, run the commands AGENTS.md
+# names; the ratchet raises the floor to the measured value minus 0.1 and writes
+# .github/badges/coverage-go.json. Commit both with the change that earned them.
+
+[[parts]]
+name = "go"
+lcov = "coverage/go.lcov"
+floor = 84.40
