@@ -1,35 +1,62 @@
+# Release on tag: `git tag v2.6.1 && git push origin v2.6.1` produces everything.
+#
+#   gate        - paxel/gates release-gate.yml: no open alert or SonarQube Cloud finding that
+#                 is not accepted, no known vulnerability, no licence outside the allowlist,
+#                 and a CHANGELOG section for the version
+#   build       - the binaries for Linux, macOS and Windows
+#   provenance  - paxel/gates provenance.yml: a CycloneDX SBOM of the source, signed build
+#                 provenance for every file and its Sigstore bundle as a file of its own
+#   release     - GitHub Release, notes = the CHANGELOG section for the tag, with every file
+#                 of the jobs before
+#
+# `go install github.com/paxel/sanshain-go/v2/cmd/sanshain-go@latest` needs no release job:
+# the Go module proxy serves the tag itself.
+#
+# One-time setup (repository secrets):
+#   GATES_ALERTS_TOKEN - read access to the repository's alerts, for the release gate
 name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ["v*"]
 
-# Read-only by default; only the job that creates the GitHub release gets more.
+# Least privilege: the job that writes the GitHub Release widens this itself.
 permissions:
   contents: read
 
 jobs:
-  release:
-    name: Create Release
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: read
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: v
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
-      # The binaries are built with the current Go, so they carry its standard
-      # library fixes; the floor for `go install` stays the go.mod directive,
-      # which the build workflow tests.
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+  gate:
+    needs: version
+    uses: paxel/gates/.github/workflows/release-gate.yml@e5e253a7caff277f039fb31a3e6be1479682dcc4 # v1.2.0
+    permissions:
+      contents: read
+      security-events: read
+    with:
+      version: ${{ needs.version.outputs.version }}
+    secrets:
+      alerts-token: ${{ secrets.GATES_ALERTS_TOKEN }}
+
+  build:
+    name: Binaries
+    needs: gate
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version: 'stable'
-          cache: true
-
-      - name: Build binaries
+          persist-credentials: false
+      # The Go release the toolchain line of go.mod pins, the one CI tested with.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Build the binaries
         run: |
           mkdir -p dist
           GOOS=linux GOARCH=amd64 go build -o dist/sanshain-go-linux-amd64 ./cmd/sanshain-go
@@ -37,14 +64,56 @@ jobs:
           GOOS=darwin GOARCH=amd64 go build -o dist/sanshain-go-darwin-amd64 ./cmd/sanshain-go
           GOOS=darwin GOARCH=arm64 go build -o dist/sanshain-go-darwin-arm64 ./cmd/sanshain-go
           GOOS=windows GOARCH=amd64 go build -o dist/sanshain-go-windows-amd64.exe ./cmd/sanshain-go
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist-binaries
+          path: dist/*
+          if-no-files-found: error
 
-      - name: Upload Release Assets
+  provenance:
+    needs: build
+    uses: paxel/gates/.github/workflows/provenance.yml@e5e253a7caff277f039fb31a3e6be1479682dcc4 # v1.2.0
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    with:
+      name: sanshain-go
+      tag: ${{ github.ref_name }}
+      artifacts: dist-*
+
+  release:
+    name: GitHub Release
+    needs: [version, provenance]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The binaries, with the SBOM and the Sigstore bundle beside them:
+      # `gh attestation verify <file> -R paxel/sanshain-go` checks a download, with
+      # `--bundle <the sigstore file>` offline.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-files
+          path: dist
+      - name: Release notes from the CHANGELOG section
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { grab = 1; next }
+            grab && (/^## \[/ || /^---/) { exit }
+            grab { print }
+          ' CHANGELOG.md > notes.md
+          [ -s notes.md ] || { echo "::error::CHANGELOG.md has no section for $VERSION" >&2; exit 1; }
+      # softprops updates an existing release rather than failing on it, so a re-run for
+      # the same tag is safe.
+      - name: Create or update the release
         uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
-          body_path: CHANGELOG.md
-          files: |
-            dist/sanshain-go-linux-amd64
-            dist/sanshain-go-linux-arm64
-            dist/sanshain-go-darwin-amd64
-            dist/sanshain-go-darwin-arm64
-            dist/sanshain-go-windows-amd64.exe
+          body_path: notes.md
+          files: dist/*
+          fail_on_unmatched_files: true
