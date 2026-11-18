@@ -56,7 +56,8 @@ go test -race -coverprofile=coverage/go.out ./...
 
 `.golangci.yml` is the standard's config with gosec, errcheck, revive, bodyclose and
 errorlint; the tests are linted too. The `go` line of `go.mod` is the oldest Go that builds
-the client, 1.26.0. Do not use what that release does not have.
+the client, 1.26.0; CI tests it in a job of its own with `GOTOOLCHAIN=local go test ./...`
+on Go 1.26. Do not use what that release does not have.
 
 ### How the code is written
 
@@ -92,9 +93,9 @@ function by hand: `cd internal/config && go test -run='^$' -fuzz='^FuzzConfig$' 
 
 ### Before a release
 
-gofmt, golangci-lint, the tests under the race detector, osv-scanner with gates'
-`scripts/osv_gate.py`, the coverage ratchet, and `go build ./...` with `go vet ./...` for
-`darwin/amd64`, `darwin/arm64` and `windows/amd64`. The version stands in the constant
+gofmt, golangci-lint, the tests under the race detector, the tests on Go 1.26, osv-scanner
+with gates' `scripts/osv_gate.py`, the coverage ratchet, and `go build ./...` with
+`go vet ./...` for `darwin/amd64`, `darwin/arm64` and `windows/amd64`. The version stands in the constant
 `version` of `cmd/sanshain-go/main.go` and in the test of `--version` in
 `cmd/sanshain-go/main_test.go`. The release workflow runs the shared release gate before it
 builds the binaries.

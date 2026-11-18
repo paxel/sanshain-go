@@ -18,10 +18,14 @@ config, the files and the badge row. What follows is where sanshain-go adds to i
 choice.
 
 **The Go release.** `go.mod` keeps `go 1.26.0`, the oldest Go that builds the client, and
-gains `toolchain go1.26.11`, which CI, the fuzz run and the release build with. The old
-workflows tested on Go 1.26 only, so there is no job of the repository's own for an older
-release. `go install …@version` reads the `go` line alone and is not affected; a build
-inside a clone with an older Go 1.26 downloads the pinned toolchain.
+gains `toolchain go1.27.4`, the latest stable Go, which CI, the fuzz run and the release
+build with. `go install …@version` reads the `go` line alone and is not affected; a build
+inside a clone with an older Go downloads the pinned toolchain.
+
+**The oldest supported Go.** The `go` line promises Go 1.26, and the old build workflow
+tested on it. The shared Go gate runs on the pinned toolchain, 1.27.4. So CI keeps a job of
+the repository's own that runs the tests on Go 1.26 with `GOTOOLCHAIN=local`, because the
+toolchain line would otherwise choose there too.
 
 **The other systems.** The tests run on Linux. The release also ships binaries for macOS
 and Windows, so CI asks the shared gate to build and vet the code for `darwin/amd64`,
@@ -38,16 +42,18 @@ off, and three in tests. The separate gosec job and govulncheck with its `tool` 
 golangci-lint runs gosec, and osv-scanner reads the Go advisories.
 
 **Coverage.** One part, `go`, over the whole module, measured by the gate with
-`go test -race -coverprofile`. The first floor is 86.88, the local measurement on Go 1.26.11
+`go test -race -coverprofile`. The first floor is 87.10, the local measurement on Go 1.27.4
 minus 0.1. SonarQube Cloud reads the file the gate measured.
 
 **Fuzz targets.** Four, with the names every Sanshain client uses, as Go fuzz functions
 beside the code: `FuzzConfig` reads `sanshain.yaml`, `FuzzAnnotations` fills the
-placeholders of annotation values, `FuzzResponse` reads the body and the warning headers of
-an answer of the service, `FuzzState` reads the require state file. So that a fuzzer reaches
-them without a file or a server, four readers became unexported functions of their own:
-`parseConfig`, `decodeProvideResponse`, `warningLines` and `decodeState`. The bodies of a
-require are documents the client writes to disk unread and have no target.
+placeholders of annotation values, `FuzzResponse` reads the body, the version and the
+warning headers of an answer of the service, `FuzzState` reads the require state file. So
+that a fuzzer reaches them without a file or a server, four readers became unexported
+functions of their own: `parseConfig`, `decodeProvideResponse`, `warningLines` and
+`decodeState`. `FuzzResponse` also covers the look into a required document that tells
+whether it is OpenAPI. The answers to a retire, a catalog push and the version call are read
+by `encoding/json` alone, inside the calls, and have no target.
 
 **Accepted findings.** SonarQube Cloud reports the line where `--insecure` switches the
 verification of the certificate off under two rules, S4830 and S5527.
@@ -58,9 +64,9 @@ single maintainer. No advisory and no licence is accepted: the one dependency,
 
 **Release.** The shared release gate checks alerts, findings, vulnerabilities, licences and
 the changelog section, and runs no tests. The release has no test job of its own: a Go
-module version is the tag itself, served by the module proxy, so nothing the workflow could
-stop is published by it. The binaries are built with the pinned toolchain, where they used
-to be built with whatever Go was the newest that day.
+module version is published by the tag itself, through the module proxy, so a job in the
+release could not hold it back. The binaries are built with the pinned toolchain, where they
+used to be built with whatever Go was the newest that day.
 
 **What the release attaches.** The five binaries, for Linux (amd64, arm64), macOS (amd64,
 arm64) and Windows (amd64), under the names they always had, with the SBOM of the source, a
