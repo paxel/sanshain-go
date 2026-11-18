@@ -105,7 +105,7 @@ func TestFormat_QueryParamSent(t *testing.T) {
 			if r.URL.Path != tc.path || r.URL.Query().Get("format") != "openapi" {
 				t.Errorf("expected %s with format=openapi, got %s?%s", tc.path, r.URL.Path, r.URL.RawQuery)
 			}
-			got, err := os.ReadFile(filepath.Join(dir, "gen", tc.file))
+			got, err := os.ReadFile(filepath.Join(dir, "gen", tc.file)) //nolint:gosec // G304: a file of the test's own temporary directory
 			if err != nil || string(got) != openapiDoc {
 				t.Errorf("expected the OpenAPI document in %s, got %q, %v", tc.file, got, err)
 			}

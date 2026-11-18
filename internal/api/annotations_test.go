@@ -188,10 +188,10 @@ func TestProvide_SendsEveryAnnotation(t *testing.T) {
 	rec := newRecorder(t, 0, provideAnswer)
 	c := NewSanshainClient(rec.URL, "", false)
 	all := filledExample()
-	_, err1 := c.Provide(ProvidePayload{ProducerName: "p", OpenApiYaml: "x", Stability: "ga", Annotations: all}, false)
-	_, err2 := c.ProvideAsyncApi(ProvideAsyncApiPayload{ProducerName: "p", AsyncApiYaml: "x", Stability: "ga", Annotations: all}, false)
+	_, err1 := c.Provide(ProvidePayload{ProducerName: "p", OpenAPIYaml: "x", Stability: "ga", Annotations: all}, false)
+	_, err2 := c.ProvideAsyncAPI(ProvideAsyncAPIPayload{ProducerName: "p", AsyncAPIYaml: "x", Stability: "ga", Annotations: all}, false)
 	_, err3 := c.ProvideProto(ProvideProtoPayload{ProducerName: "p", ProtoContent: "x", Stability: "ga", Annotations: all}, false)
-	_, err4 := c.Provide(ProvidePayload{ProducerName: "p", OpenApiYaml: "x", Stability: "ga"}, false)
+	_, err4 := c.Provide(ProvidePayload{ProducerName: "p", OpenAPIYaml: "x", Stability: "ga"}, false)
 	if err1 != nil || err2 != nil || err3 != nil || err4 != nil {
 		t.Fatalf("provides failed: %v %v %v %v", err1, err2, err3, err4)
 	}
@@ -277,7 +277,7 @@ func TestProvide_RepeatsWithoutAnnotationsWhenAnOldServiceRefusesThem(t *testing
 	}))
 	defer srv.Close()
 	c := NewSanshainClient(srv.URL, "", false)
-	payload := ProvidePayload{ProducerName: "p", OpenApiYaml: "x", Stability: "snapshot", Origin: Origin{BuildURL: "https://ci/1"}, Annotations: filledExample()}
+	payload := ProvidePayload{ProducerName: "p", OpenAPIYaml: "x", Stability: "snapshot", Origin: Origin{BuildURL: "https://ci/1"}, Annotations: filledExample()}
 	resp, err := c.Provide(payload, false)
 	if err != nil || resp == nil || resp.Version != "1.0.0" {
 		t.Fatalf("want the repeated provide to succeed, got %v, %v", resp, err)
@@ -288,7 +288,7 @@ func TestProvide_RepeatsWithoutAnnotationsWhenAnOldServiceRefusesThem(t *testing
 	if _, present := bodies[1]["annotations"]; present || bodies[1]["build_url"] != "https://ci/1" {
 		t.Errorf("want the repeat without annotations but with the origin, got %v", bodies[1])
 	}
-	if _, err := c.ProvideAsyncApi(ProvideAsyncApiPayload{ProducerName: "p", AsyncApiYaml: "x", Stability: "snapshot", Annotations: filledExample()}, false); err != nil {
+	if _, err := c.ProvideAsyncAPI(ProvideAsyncAPIPayload{ProducerName: "p", AsyncAPIYaml: "x", Stability: "snapshot", Annotations: filledExample()}, false); err != nil {
 		t.Fatal(err)
 	}
 	if len(bodies) != 3 {
@@ -302,7 +302,7 @@ func TestProvide_DropsAnnotationsAndOriginInEitherOrder(t *testing.T) {
 	for _, order := range [][]string{{"annotations", "note"}, {"note", "annotations"}} {
 		rec := newRecorder(t, http.StatusUnprocessableEntity, provideAnswer, order...)
 		c := NewSanshainClient(rec.URL, "", false)
-		payload := ProvidePayload{ProducerName: "p", OpenApiYaml: "x", Stability: "snapshot", Origin: Origin{Note: "why"}, Annotations: filledExample()}
+		payload := ProvidePayload{ProducerName: "p", OpenAPIYaml: "x", Stability: "snapshot", Origin: Origin{Note: "why"}, Annotations: filledExample()}
 		if _, err := c.Provide(payload, false); err != nil {
 			t.Fatalf("%v: want success, got %v", order, err)
 		}
@@ -330,7 +330,7 @@ func TestProvide_OtherUnknownFieldIsNoFallback(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewSanshainClient(srv.URL, "", false)
-	_, err := c.Provide(ProvidePayload{ProducerName: "p", OpenApiYaml: "x", Origin: Origin{BuildURL: "https://ci/1"}, Annotations: filledExample()}, false)
+	_, err := c.Provide(ProvidePayload{ProducerName: "p", OpenAPIYaml: "x", Origin: Origin{BuildURL: "https://ci/1"}, Annotations: filledExample()}, false)
 	if err == nil || !strings.Contains(err.Error(), "422") || !strings.Contains(err.Error(), "colour") {
 		t.Errorf("want the 422 to fail the provide, got %v", err)
 	}

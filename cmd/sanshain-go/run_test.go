@@ -30,6 +30,7 @@ func TestHelperProcess(t *testing.T) {
 // returns its stdout, stderr and exit code.
 func runMain(t *testing.T, env []string, args ...string) (string, string, int) {
 	t.Helper()
+	//nolint:gosec // G204: the test runs its own binary again
 	cmd := exec.Command(os.Args[0], append([]string{"-test.run=^TestHelperProcess$", "--"}, args...)...)
 	cmd.Env = append(append(os.Environ(),
 		"SANSHAIN_GO_HELPER_PROCESS=1",

@@ -1,3 +1,5 @@
+// Command sanshain-go is the Go client of the Sanshain Service: it provides a
+// project's API specifications and downloads the endpoints it requires.
 package main
 
 import (
@@ -246,7 +248,7 @@ func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, stabi
 	for _, p := range provides {
 		if p.Retired {
 			provided = true
-			err := retireFamily(client, cfg, p.ApiType)
+			err := retireFamily(client, cfg, p.APIType)
 			failed = failed || err != nil
 			if err := soften(cfg.BestEffort, err); err != nil {
 				return err
@@ -259,14 +261,14 @@ func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, stabi
 		}
 		var files []fileInfo
 		if p.File != "" {
-			files = append(files, fileInfo{p.File, p.ApiType})
+			files = append(files, fileInfo{p.File, p.APIType})
 		}
 		// Backward compatibility
-		if p.OpenApiFile != "" {
-			files = append(files, fileInfo{p.OpenApiFile, "openapi"})
+		if p.OpenAPIFile != "" {
+			files = append(files, fileInfo{p.OpenAPIFile, "openapi"})
 		}
-		if p.AsyncApiFile != "" {
-			files = append(files, fileInfo{p.AsyncApiFile, "asyncapi"})
+		if p.AsyncAPIFile != "" {
+			files = append(files, fileInfo{p.AsyncAPIFile, "asyncapi"})
 		}
 		if p.ProtoFile != "" {
 			files = append(files, fileInfo{p.ProtoFile, "proto"})
@@ -295,8 +297,7 @@ func handleProvide(client *api.SanshainClient, cfg *config.SanshainConfig, stabi
 
 func provideFile(client *api.SanshainClient, cfg *config.SanshainConfig, filePath, apiType, stability string, stream api.Stream, origin api.Origin, annotations []api.Annotation) error {
 	producerName, compression := cfg.ServiceName, cfg.Compression
-	/* #nosec G304 */
-	specData, err := os.ReadFile(filePath)
+	specData, err := os.ReadFile(filePath) //nolint:gosec // G304: the path is the specification file sanshain.yaml names
 	if err != nil {
 		return fmt.Errorf("failed to read specification file %s: %w", filePath, err)
 	}
@@ -311,7 +312,7 @@ func provideFile(client *api.SanshainClient, cfg *config.SanshainConfig, filePat
 	case "", "openapi":
 		payload := api.ProvidePayload{
 			ProducerName: producerName,
-			OpenApiYaml:  content,
+			OpenAPIYaml:  content,
 			Stability:    stability,
 			Trunk:        stream.Trunk,
 			Tag:          stream.Tag,
@@ -321,9 +322,9 @@ func provideFile(client *api.SanshainClient, cfg *config.SanshainConfig, filePat
 		fmt.Printf("Providing OpenAPI %s (stability: %s) to %s...\n", producerName, stability, client.BaseURL)
 		resp, err = client.Provide(payload, compression)
 	case "asyncapi":
-		payload := api.ProvideAsyncApiPayload{
+		payload := api.ProvideAsyncAPIPayload{
 			ProducerName: producerName,
-			AsyncApiYaml: content,
+			AsyncAPIYaml: content,
 			Stability:    stability,
 			Trunk:        stream.Trunk,
 			Tag:          stream.Tag,
@@ -331,7 +332,7 @@ func provideFile(client *api.SanshainClient, cfg *config.SanshainConfig, filePat
 			Annotations:  annotations,
 		}
 		fmt.Printf("Providing AsyncAPI %s (stability: %s) to %s...\n", producerName, stability, client.BaseURL)
-		resp, err = client.ProvideAsyncApi(payload, compression)
+		resp, err = client.ProvideAsyncAPI(payload, compression)
 	case "proto", "grpc":
 		payload := api.ProvideProtoPayload{
 			ProducerName: producerName,
@@ -437,7 +438,7 @@ func handleRequire(client *api.SanshainClient, cfg *config.SanshainConfig, sc *c
 // directory.
 func requireEntry(client *api.SanshainClient, cfg *config.SanshainConfig, sc *cache.SanshainCache, stream api.Stream, annotations []api.Annotation, req config.RequireConfig) error {
 	fmt.Printf("Requiring %s@%s from %s...\n", req.ServiceName, req.Version, cfg.SanshainURL)
-	apiType := requireApiType(req.ApiType)
+	apiType := requireAPIType(req.APIType)
 
 	var result *api.RequireResult
 	var reqErr error
@@ -460,7 +461,7 @@ func requireEntry(client *api.SanshainClient, cfg *config.SanshainConfig, sc *ca
 			ConsumerName: cfg.ServiceName,
 			ProducerName: req.ServiceName,
 			Version:      req.Version,
-			ApiType:      apiType,
+			APIType:      apiType,
 			Trunk:        stream.Trunk,
 			Tag:          stream.Tag,
 			Format:       req.Format,
@@ -492,7 +493,7 @@ func requireEntry(client *api.SanshainClient, cfg *config.SanshainConfig, sc *ca
 	}
 
 	outputPath := filepath.Join(req.OutputDirectory, filepath.Clean(fileName))
-	/* #nosec G306 G703 */
+	//nolint:gosec // G703: the path is the output directory of sanshain.yaml and a file name cleaned above
 	if err := os.WriteFile(outputPath, []byte(result.Content), 0600); err != nil {
 		return fmt.Errorf("failed to write output file %s: %w", outputPath, err)
 	}
@@ -520,9 +521,9 @@ func cachedEtag(sc *cache.SanshainCache, cacheKey, outputFile string) string {
 	return entry.Etag
 }
 
-// requireApiType is a require's apiType as the service's routes and bundle
+// requireAPIType is a require's apiType as the service's routes and bundle
 // spell it: grpc, which a provide accepts too, is proto.
-func requireApiType(apiType string) string {
+func requireAPIType(apiType string) string {
 	if apiType == "grpc" {
 		return "proto"
 	}
@@ -586,8 +587,7 @@ func handleCatalog(client *api.SanshainClient, cfg *config.SanshainConfig, strea
 		return nil
 	}
 
-	/* #nosec G304 */
-	content, err := os.ReadFile(cfg.CatalogInfo)
+	content, err := os.ReadFile(cfg.CatalogInfo) //nolint:gosec // G304: the path is catalogInfo of sanshain.yaml
 	if err != nil {
 		return fmt.Errorf("failed to read catalogInfo file %s: %w", cfg.CatalogInfo, err)
 	}

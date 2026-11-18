@@ -1,3 +1,4 @@
+// Package config reads and validates sanshain.yaml.
 package config
 
 import (
@@ -12,14 +13,17 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
+// EndpointConfig is one endpoint of a require: its method and path.
 type EndpointConfig struct {
 	Method string `yaml:"method"`
 	Path   string `yaml:"path"`
 }
 
+// RequireConfig is one requires entry of sanshain.yaml: the endpoints of one
+// producer at an exact version and the directory they are written to.
 type RequireConfig struct {
 	ServiceName     string           `yaml:"serviceName"`
-	ApiType         string           `yaml:"apiType,omitempty"`
+	APIType         string           `yaml:"apiType,omitempty"`
 	Version         string           `yaml:"version"`
 	OutputDirectory string           `yaml:"outputDirectory"`
 	Endpoints       []EndpointConfig `yaml:"endpoints"`
@@ -28,11 +32,13 @@ type RequireConfig struct {
 	Format string `yaml:"format,omitempty"`
 }
 
+// ProvideConfig is one provides entry of sanshain.yaml: a specification file
+// and, where the file does not say it, its API type.
 type ProvideConfig struct {
 	File         string `yaml:"file,omitempty"`
-	ApiType      string `yaml:"apiType,omitempty"`
-	OpenApiFile  string `yaml:"openApiFile,omitempty"`
-	AsyncApiFile string `yaml:"asyncApiFile,omitempty"`
+	APIType      string `yaml:"apiType,omitempty"`
+	OpenAPIFile  string `yaml:"openApiFile,omitempty"`
+	AsyncAPIFile string `yaml:"asyncApiFile,omitempty"`
 	ProtoFile    string `yaml:"protoFile,omitempty"`
 	// The project no longer provides this family. Deleting the entry says
 	// nothing — Sanshain cannot tell a dropped protocol from a pipeline that
@@ -50,6 +56,7 @@ type Annotation struct {
 	Value string `yaml:"value"`
 }
 
+// SanshainConfig is sanshain.yaml as the client reads it.
 type SanshainConfig struct {
 	SanshainURL string `yaml:"sanshainUrl"`
 	ServiceName string `yaml:"serviceName"`
@@ -84,8 +91,7 @@ var ErrUnknownFieldsStrict = errors.New("strict: sanshain.yaml has unknown field
 // it a file that does not validate is broken, and its own strict does not
 // count: the unknown fields are ignored and the validation error is returned.
 func LoadConfig(configPath string, warn io.Writer, bestEffort bool) (*SanshainConfig, error) {
-	/* #nosec G304 */
-	data, err := os.ReadFile(configPath)
+	data, err := os.ReadFile(configPath) //nolint:gosec // G304: the path is the config file the user names
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
@@ -151,8 +157,8 @@ func resolvePaths(config *SanshainConfig, baseDir string) {
 	}
 	resolveProvide := func(p *ProvideConfig) {
 		resolve(&p.File)
-		resolve(&p.OpenApiFile)
-		resolve(&p.AsyncApiFile)
+		resolve(&p.OpenAPIFile)
+		resolve(&p.AsyncAPIFile)
 		resolve(&p.ProtoFile)
 	}
 	resolve(&config.CatalogInfo)
@@ -238,15 +244,15 @@ func validateConfig(config *SanshainConfig) error {
 	}
 
 	validateProvide := func(p *ProvideConfig, i int) error {
-		if !slices.Contains(apiTypes, p.ApiType) {
-			return fmt.Errorf("provide[%d]: unsupported apiType: %s — use openapi, asyncapi or proto (grpc means proto)", i, p.ApiType)
+		if !slices.Contains(apiTypes, p.APIType) {
+			return fmt.Errorf("provide[%d]: unsupported apiType: %s — use openapi, asyncapi or proto (grpc means proto)", i, p.APIType)
 		}
 		if p.Retired {
 			// A retire names its family via apiType alone; a file may stay
 			// configured (the spec often still exists on disk) but is unused.
 			return nil
 		}
-		if p.File == "" && p.OpenApiFile == "" && p.AsyncApiFile == "" && p.ProtoFile == "" {
+		if p.File == "" && p.OpenAPIFile == "" && p.AsyncAPIFile == "" && p.ProtoFile == "" {
 			return fmt.Errorf("at least one of file, openApiFile, asyncApiFile, or protoFile must be specified in provide[%d]", i)
 		}
 		return nil
@@ -273,13 +279,13 @@ func validateConfig(config *SanshainConfig) error {
 				"requires[%d] (%s): missing 'version' — Sanshain 2.0 pins exact versions; add version: 1.2.0 (list available: GET /producers/%s/versions)",
 				i, req.ServiceName, req.ServiceName)
 		}
-		if !slices.Contains(apiTypes, req.ApiType) {
-			return fmt.Errorf("requires[%d] (%s): unsupported apiType: %s — use openapi, asyncapi or proto (grpc means proto)", i, req.ServiceName, req.ApiType)
+		if !slices.Contains(apiTypes, req.APIType) {
+			return fmt.Errorf("requires[%d] (%s): unsupported apiType: %s — use openapi, asyncapi or proto (grpc means proto)", i, req.ServiceName, req.APIType)
 		}
-		if req.Format != "" && (req.Format != "openapi" || req.ApiType != "asyncapi") {
+		if req.Format != "" && (req.Format != "openapi" || req.APIType != "asyncapi") {
 			return fmt.Errorf(
 				"requires[%d] (%s): format '%s' with apiType '%s' is not supported — the only allowed combination is 'apiType: asyncapi' with 'format: openapi'",
-				i, req.ServiceName, req.Format, req.ApiType)
+				i, req.ServiceName, req.Format, req.APIType)
 		}
 		if req.OutputDirectory == "" {
 			return fmt.Errorf("missing outputDirectory in requires[%d]", i)

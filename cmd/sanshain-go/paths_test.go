@@ -79,7 +79,7 @@ requires:
 	if err := handleRequire(client, cfg, cache.NewSanshainCache(t.TempDir()), api.Stream{}, nil); err != nil {
 		t.Fatalf("require failed: %v", err)
 	}
-	got, err := os.ReadFile(filepath.Join(dir, "gen", "other.yaml"))
+	got, err := os.ReadFile(filepath.Join(dir, "gen", "other.yaml")) //nolint:gosec // G304: a file of the test's own temporary directory
 	if err != nil {
 		t.Fatalf("expected required spec next to the config: %v", err)
 	}

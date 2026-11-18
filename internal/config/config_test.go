@@ -45,8 +45,8 @@ requires:
 	if cfg.ServiceName != "test-service" {
 		t.Errorf("expected test-service, got %s", cfg.ServiceName)
 	}
-	if want := filepath.Join(filepath.Dir(path), "api.yaml"); cfg.Provide.OpenApiFile != want {
-		t.Errorf("expected %s, got %s", want, cfg.Provide.OpenApiFile)
+	if want := filepath.Join(filepath.Dir(path), "api.yaml"); cfg.Provide.OpenAPIFile != want {
+		t.Errorf("expected %s, got %s", want, cfg.Provide.OpenAPIFile)
 	}
 	if len(cfg.Requires) != 1 {
 		t.Fatalf("expected 1 require, got %d", len(cfg.Requires))
@@ -239,7 +239,7 @@ provides:
 	if err != nil {
 		t.Fatalf("a retired entry without a file must parse, got: %v", err)
 	}
-	if len(cfg.Provides) != 1 || !cfg.Provides[0].Retired || cfg.Provides[0].ApiType != "asyncapi" {
+	if len(cfg.Provides) != 1 || !cfg.Provides[0].Retired || cfg.Provides[0].APIType != "asyncapi" {
 		t.Errorf("unexpected config: %+v", cfg.Provides)
 	}
 }
@@ -285,8 +285,8 @@ requires:
 	checks := []struct{ got, want string }{
 		{cfg.CatalogInfo, filepath.Join(dir, "catalog-info.yaml")},
 		{cfg.Provide.File, filepath.Join(dir, "api", "openapi.yaml")},
-		{cfg.Provides[0].OpenApiFile, filepath.Join(filepath.Dir(dir), "shared", "openapi.yaml")},
-		{cfg.Provides[0].AsyncApiFile, filepath.Join(dir, "async.yaml")},
+		{cfg.Provides[0].OpenAPIFile, filepath.Join(filepath.Dir(dir), "shared", "openapi.yaml")},
+		{cfg.Provides[0].AsyncAPIFile, filepath.Join(dir, "async.yaml")},
 		{cfg.Provides[0].ProtoFile, abs},
 		{cfg.Provides[1].File, ""},
 		{cfg.Requires[0].OutputDirectory, filepath.Join(dir, "gen", "other")},
@@ -585,7 +585,7 @@ func TestLoadConfig_MalformedAnnotation(t *testing.T) {
 
 // An unknown apiType is a configuration error at load, on a provide and on a
 // require alike; every accepted spelling loads.
-func TestLoadConfig_UnknownApiType(t *testing.T) {
+func TestLoadConfig_UnknownAPIType(t *testing.T) {
 	entry := func(provideType, requireType string) string {
 		return "sanshainUrl: http://localhost:3000\nserviceName: svc\nprovides:\n  - file: api.yaml\n    apiType: " + provideType +
 			"\nrequires:\n  - serviceName: users\n    apiType: " + requireType +

@@ -40,7 +40,7 @@ func TestSanshainClient_Provide_SendsStabilityAndNoBranchEraFields(t *testing.T)
 	client := NewSanshainClient(ts.URL, "token", false)
 	payload := ProvidePayload{
 		ProducerName: "test",
-		OpenApiYaml:  "openapi: 3.0.3",
+		OpenAPIYaml:  "openapi: 3.0.3",
 		Stability:    "snapshot",
 	}
 	resp, err := client.Provide(payload, false)
@@ -78,7 +78,7 @@ func TestSanshainClient_Provide_GaStability(t *testing.T) {
 	defer ts.Close()
 
 	client := NewSanshainClient(ts.URL, "token", false)
-	_, err := client.Provide(ProvidePayload{ProducerName: "test", OpenApiYaml: "x", Stability: "ga"}, false)
+	_, err := client.Provide(ProvidePayload{ProducerName: "test", OpenAPIYaml: "x", Stability: "ga"}, false)
 	if err != nil {
 		t.Fatalf("Provide failed: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestSanshainClient_Provide_ConflictSurfacesProposedVersion(t *testing.T) {
 	defer ts.Close()
 
 	client := NewSanshainClient(ts.URL, "token", false)
-	_, err := client.Provide(ProvidePayload{ProducerName: "test", OpenApiYaml: "x", Stability: "ga"}, false)
+	_, err := client.Provide(ProvidePayload{ProducerName: "test", OpenAPIYaml: "x", Stability: "ga"}, false)
 	if err == nil {
 		t.Fatal("expected 409 error")
 	}
@@ -262,7 +262,7 @@ func TestSanshainClient_LazyWrongServerDiagnosis(t *testing.T) {
 	defer ts.Close()
 
 	client := NewSanshainClient(ts.URL, "token", false)
-	_, err := client.Provide(ProvidePayload{ProducerName: "test", OpenApiYaml: "x", Stability: "snapshot"}, false)
+	_, err := client.Provide(ProvidePayload{ProducerName: "test", OpenAPIYaml: "x", Stability: "snapshot"}, false)
 	if err == nil {
 		t.Fatal("expected error against pre-2.0 server")
 	}
@@ -297,7 +297,7 @@ func TestSanshainClient_NoDiagnosisWhenServerIs2x(t *testing.T) {
 	defer ts.Close()
 
 	client := NewSanshainClient(ts.URL, "token", false)
-	_, err := client.Provide(ProvidePayload{ProducerName: "test", OpenApiYaml: "x", Stability: "snapshot"}, false)
+	_, err := client.Provide(ProvidePayload{ProducerName: "test", OpenAPIYaml: "x", Stability: "snapshot"}, false)
 	if err == nil {
 		t.Fatal("expected 400 error")
 	}
@@ -370,7 +370,7 @@ func TestProvide_CarriesTheDeclaredStream(t *testing.T) {
 	defer ts.Close()
 	client := NewSanshainClient(ts.URL, "", false)
 
-	_, err := client.Provide(ProvidePayload{ProducerName: "p", OpenApiYaml: "x", Stability: "snapshot", Trunk: true}, false)
+	_, err := client.Provide(ProvidePayload{ProducerName: "p", OpenAPIYaml: "x", Stability: "snapshot", Trunk: true}, false)
 	if err != nil {
 		t.Fatalf("Provide failed: %v", err)
 	}
@@ -378,13 +378,13 @@ func TestProvide_CarriesTheDeclaredStream(t *testing.T) {
 		t.Errorf("trunk must ride the payload, got %v", rawBody)
 	}
 
-	_, _ = client.Provide(ProvidePayload{ProducerName: "p", OpenApiYaml: "x", Stability: "snapshot", Tag: "R"}, false)
+	_, _ = client.Provide(ProvidePayload{ProducerName: "p", OpenAPIYaml: "x", Stability: "snapshot", Tag: "R"}, false)
 	if rawBody["tag"] != "R" {
 		t.Errorf("tag must ride the payload, got %v", rawBody)
 	}
 
 	// Undeclared: both fields absent, not false/empty.
-	_, _ = client.Provide(ProvidePayload{ProducerName: "p", OpenApiYaml: "x", Stability: "snapshot"}, false)
+	_, _ = client.Provide(ProvidePayload{ProducerName: "p", OpenAPIYaml: "x", Stability: "snapshot"}, false)
 	if _, present := rawBody["trunk"]; present {
 		t.Error("an undeclared stream must omit trunk entirely")
 	}
@@ -515,7 +515,7 @@ func TestProvide_ForbiddenNamesTheReleaserRole(t *testing.T) {
 	defer ts.Close()
 	client := NewSanshainClient(ts.URL, "", false)
 
-	_, err := client.Provide(ProvidePayload{ProducerName: "svc", OpenApiYaml: "x", Stability: "ga"}, false)
+	_, err := client.Provide(ProvidePayload{ProducerName: "svc", OpenAPIYaml: "x", Stability: "ga"}, false)
 	if err == nil {
 		t.Fatal("expected a refusal")
 	}
@@ -541,7 +541,7 @@ func TestForbidden_WithoutTheReleaserReasonShowsTheServiceMessageOnly(t *testing
 	defer ts.Close()
 	client := NewSanshainClient(ts.URL, "", false)
 
-	_, err := client.Provide(ProvidePayload{ProducerName: "svc", OpenApiYaml: "x", Stability: "snapshot"}, false)
+	_, err := client.Provide(ProvidePayload{ProducerName: "svc", OpenAPIYaml: "x", Stability: "snapshot"}, false)
 	if err == nil || err.Error() != "provide refused (403): "+readOnlyRefusal {
 		t.Errorf("expected the service's message alone, got: %v", err)
 	}
@@ -552,7 +552,7 @@ func TestForbidden_WithoutTheReleaserReasonShowsTheServiceMessageOnly(t *testing
 }
 
 func TestHarvestedSubscriptions_ParseAndClassify(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte(`{"version":"1.0.0","stability":"snapshot","content_hash":"sha256:a",
 			"changes":{"inserts":0,"updates":0,"deletes":0},
@@ -563,7 +563,7 @@ func TestHarvestedSubscriptions_ParseAndClassify(t *testing.T) {
 	defer ts.Close()
 	client := NewSanshainClient(ts.URL, "", false)
 
-	resp, err := client.ProvideAsyncApi(ProvideAsyncApiPayload{ProducerName: "p", AsyncApiYaml: "x", Stability: "snapshot"}, false)
+	resp, err := client.ProvideAsyncAPI(ProvideAsyncAPIPayload{ProducerName: "p", AsyncAPIYaml: "x", Stability: "snapshot"}, false)
 	if err != nil {
 		t.Fatalf("provide failed: %v", err)
 	}
@@ -662,7 +662,7 @@ func TestPushCatalog_Recorded(t *testing.T) {
 		`{"system":"s","trunk":false,"resources":["r"]}`: true,
 	}
 	for body, want := range cases {
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte(body))
 		}))
 		resp, err := NewSanshainClient(ts.URL, "", false).PushCatalog("s", "x", false, false, nil)
@@ -694,10 +694,10 @@ func warningServer(t *testing.T, status int, body string) *httptest.Server {
 func TestTakeWarnings_EveryCallEveryStatus(t *testing.T) {
 	calls := map[string]func(*SanshainClient){
 		"provide": func(c *SanshainClient) {
-			_, _ = c.Provide(ProvidePayload{ProducerName: "p", OpenApiYaml: "x", Stability: "snapshot"}, false)
+			_, _ = c.Provide(ProvidePayload{ProducerName: "p", OpenAPIYaml: "x", Stability: "snapshot"}, false)
 		},
 		"provide asyncapi": func(c *SanshainClient) {
-			_, _ = c.ProvideAsyncApi(ProvideAsyncApiPayload{ProducerName: "p", AsyncApiYaml: "x", Stability: "snapshot"}, false)
+			_, _ = c.ProvideAsyncAPI(ProvideAsyncAPIPayload{ProducerName: "p", AsyncAPIYaml: "x", Stability: "snapshot"}, false)
 		},
 		"provide grpc": func(c *SanshainClient) {
 			_, _ = c.ProvideProto(ProvideProtoPayload{ProducerName: "p", ProtoContent: "x", Stability: "snapshot"}, false)

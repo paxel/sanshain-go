@@ -1,3 +1,4 @@
+// Package utils holds the helpers the other packages share.
 package utils
 
 import (
@@ -6,6 +7,7 @@ import (
 	"io"
 )
 
+// Compress returns data gzip-compressed.
 func Compress(data []byte) ([]byte, error) {
 	var buf bytes.Buffer
 	gw := gzip.NewWriter(&buf)
@@ -18,6 +20,7 @@ func Compress(data []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// Decompress returns the content of gzip-compressed data.
 func Decompress(data []byte) ([]byte, error) {
 	gr, err := gzip.NewReader(bytes.NewReader(data))
 	if err != nil {
