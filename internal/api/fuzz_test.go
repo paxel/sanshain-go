@@ -75,17 +75,21 @@ func FuzzAnnotations(f *testing.F) {
 	})
 }
 
-// FuzzResponse reads what the service answers: any body and any
+// FuzzResponse reads what the service answers: any body, any version and any
 // Sanshain-Warning header values, never a panic.
 //
-// The input is read twice: as the body of an answer, failed or successful,
-// and, split at line feeds, as the values of the warning headers.
+// The input is read as the body of an answer, failed or successful, as the
+// version the service names, and, split at line feeds, as the values of the
+// warning headers.
 func FuzzResponse(f *testing.F) {
 	f.Add([]byte(`{"error":"version 1.2.0 is GA and immutable","proposed_version":"1.2.1"}`))
 	f.Add([]byte(`{"version":"1.2.0","stability":"snapshot","content_hash":"sha256:a","changes":{"inserts":1,"updates":0,"deletes":0},"harvested_subscriptions":[{"channel":"c","message_name":"m","owner":"","drift":"d"}]}`))
 	f.Add([]byte("unknown field `annotations`, expected one of `producername`, `build_url`\nsecond line"))
 	f.Add([]byte("<html>\x00\xff bad gateway</html>"))
 	f.Add([]byte(`{"error":7,"changes":[]}`))
+	f.Add([]byte("openapi: 3.0.3\ninfo:\n  version: 1.2.0\n"))
+	f.Add([]byte("v2.13.0-rc1"))
+	f.Add([]byte("1.9"))
 	f.Add([]byte(""))
 	f.Fuzz(func(t *testing.T, data []byte) {
 		body := string(data)
@@ -97,6 +101,14 @@ func FuzzResponse(f *testing.F) {
 		}
 		_ = annotationsFieldRefused(body)
 		_ = originFieldRefused(body)
+		// A require that asked for a format looks into the document it got.
+		_ = isOpenAPI(body)
+		if major, ok := parseMajor(body); !ok && major != 0 {
+			t.Fatalf("expected no major version for %q, got %d", body, major)
+		}
+		if atLeast(body, 2, 4, 0) && !atLeast(body, 2, 0, 0) {
+			t.Fatalf("%q is at least 2.4.0 but not at least 2.0.0", body)
+		}
 
 		values := bytes.Split(data, []byte("\n"))
 		header := http.Header{}
