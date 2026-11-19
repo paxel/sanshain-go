@@ -21,12 +21,12 @@ jobs:
   # Known vulnerabilities and licences of every dependency: osv-scanner decided by gates'
   # osv_gate.py. What is accepted stands in osv-scanner.toml.
   vulns:
-    uses: paxel/gates/.github/workflows/vulns.yml@66ed2d3a448a5f6bfa1794809b330eb9fbee01ba # v1.2.0
+    uses: paxel/gates/.github/workflows/vulns.yml@02a81ad45b815cbed94f9bb6841424a624e8155f # v1.2.0
 
   # On the Go release the toolchain line of go.mod pins. The tests run on Linux; the release
   # also ships binaries for macOS and Windows, so the code is built and vetted for those.
   go:
-    uses: paxel/gates/.github/workflows/go.yml@66ed2d3a448a5f6bfa1794809b330eb9fbee01ba # v1.2.0
+    uses: paxel/gates/.github/workflows/go.yml@02a81ad45b815cbed94f9bb6841424a624e8155f # v1.2.0
     with:
       cross: |
         darwin/amd64
@@ -53,6 +53,6 @@ jobs:
 
   sonar:
     needs: go
-    uses: paxel/gates/.github/workflows/sonar.yml@66ed2d3a448a5f6bfa1794809b330eb9fbee01ba # v1.2.0
+    uses: paxel/gates/.github/workflows/sonar.yml@02a81ad45b815cbed94f9bb6841424a624e8155f # v1.2.0
     secrets:
       sonar-token: ${{ secrets.SQ_TOKEN }}
