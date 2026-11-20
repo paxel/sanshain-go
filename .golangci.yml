@@ -1,6 +1,18 @@
+# The strict Go lint config of the standard (paxel/gates configs/go/.golangci.yml):
+# golangci-lint v2 with gosec, errcheck and revive on top of the defaults; gofmt as the
+# formatter. The staticcheck settings are the repository's own.
 version: "2"
 
 linters:
+  default: standard
+  enable:
+    - gosec
+    - errcheck
+    - revive
+    - govet
+    - staticcheck
+    - bodyclose
+    - errorlint
   settings:
     staticcheck:
       checks:
@@ -15,3 +27,11 @@ linters:
         # Error messages start with the product name ("Sanshain server at …"),
         # word for word the same in every Sanshain client.
         - -ST1005
+
+formatters:
+  enable:
+    - gofmt
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

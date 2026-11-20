@@ -1,3 +1,5 @@
+// Package api talks to the Sanshain Service: the wire payloads, the calls and
+// what the client makes of the answers.
 package api
 
 import (
@@ -25,7 +27,7 @@ import (
 // spec's info.version.
 type ProvidePayload struct {
 	ProducerName string `json:"producername"`
-	OpenApiYaml  string `json:"openapi_yaml"`
+	OpenAPIYaml  string `json:"openapi_yaml"`
 	Stability    string `json:"stability"`
 	DryRun       bool   `json:"dry_run,omitempty"`
 	// The stream this build belongs to (ADR-0004/0005). Omitted when
@@ -39,9 +41,10 @@ type ProvidePayload struct {
 	Annotations []Annotation `json:"annotations,omitempty"`
 }
 
-type ProvideAsyncApiPayload struct {
+// ProvideAsyncAPIPayload is the wire payload for POST /provide/asyncapi.
+type ProvideAsyncAPIPayload struct {
 	ProducerName string `json:"producername"`
-	AsyncApiYaml string `json:"asyncapi_yaml"`
+	AsyncAPIYaml string `json:"asyncapi_yaml"`
 	Stability    string `json:"stability"`
 	DryRun       bool   `json:"dry_run,omitempty"`
 	Trunk        bool   `json:"trunk,omitempty"`
@@ -50,6 +53,7 @@ type ProvideAsyncApiPayload struct {
 	Annotations []Annotation `json:"annotations,omitempty"`
 }
 
+// ProvideProtoPayload is the wire payload for POST /provide/grpc.
 type ProvideProtoPayload struct {
 	ProducerName string `json:"producername"`
 	ProtoContent string `json:"proto_content"`
@@ -84,6 +88,8 @@ type RetiredProtocol struct {
 	ContractsReleased int64 `json:"contracts_released"`
 }
 
+// ProvideResponse is what the service answers to a provide: the version it
+// read from the specification and what the provide changed.
 type ProvideResponse struct {
 	Version     string         `json:"version"`
 	Stability   string         `json:"stability"`
@@ -127,18 +133,22 @@ func (h HarvestedSubscription) Describe() string {
 	return line
 }
 
+// ProvideChanges counts the endpoints a provide inserted, updated and deleted.
 type ProvideChanges struct {
 	Inserts int `json:"inserts"`
 	Updates int `json:"updates"`
 	Deletes int `json:"deletes"`
 }
 
+// RequireResult is the answer to a require: the content and its ETag, or
+// NotModified when the service still holds what the ETag sent names.
 type RequireResult struct {
 	Content     string
 	Etag        string
 	NotModified bool
 }
 
+// RequireBundleEndpoint is one endpoint of a bundle require.
 type RequireBundleEndpoint struct {
 	Path   string `json:"path"`
 	Method string `json:"method"`
@@ -152,7 +162,7 @@ type RequireBundlePayload struct {
 	ConsumerName string                  `json:"consumername"`
 	ProducerName string                  `json:"producername"`
 	Version      string                  `json:"version"`
-	ApiType      string                  `json:"api_type,omitempty"`
+	APIType      string                  `json:"api_type,omitempty"`
 	Endpoints    []RequireBundleEndpoint `json:"endpoints"`
 	DryRun       bool                    `json:"dry_run,omitempty"`
 	Trunk        bool                    `json:"trunk,omitempty"`
@@ -228,6 +238,7 @@ func parseErrorBody(body string) errorBody {
 	return eb
 }
 
+// SanshainClient makes the calls to one Sanshain Service.
 type SanshainClient struct {
 	BaseURL    string
 	Token      string
@@ -260,15 +271,23 @@ func (c *SanshainClient) do(req *http.Request) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	c.warnings = append(c.warnings, resp.Header.Values("Sanshain-Warning")...)
+	c.warnings = append(c.warnings, warningLines(resp.Header)...)
 	return resp, nil
 }
 
+// warningLines returns the Sanshain-Warning lines of a response's headers, in
+// order.
+func warningLines(header http.Header) []string {
+	return header.Values("Sanshain-Warning")
+}
+
+// NewSanshainClient returns a client for the service at baseURL. insecure
+// skips the verification of the service's certificate.
 func NewSanshainClient(baseURL, token string, insecure bool) *SanshainClient {
 	httpClient := &http.Client{}
 	if insecure {
 		httpClient.Transport = &http.Transport{
-			/* #nosec G402 */
+			//nolint:gosec // G402: --insecure is the user's explicit choice for a self-signed certificate
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		}
 	}
@@ -280,6 +299,7 @@ func NewSanshainClient(baseURL, token string, insecure bool) *SanshainClient {
 	}
 }
 
+// Provide posts an OpenAPI specification.
 func (c *SanshainClient) Provide(payload ProvidePayload, compression bool) (*ProvideResponse, error) {
 	return c.provideDropping("/provide", &payload, &payload.Origin, &payload.Annotations, compression)
 }
@@ -330,10 +350,12 @@ func warnOriginDropped() {
 	fmt.Fprintln(os.Stderr, "⚠ Sanshain Service before 2.9.0 does not take the build's origin; providing without it")
 }
 
-func (c *SanshainClient) ProvideAsyncApi(payload ProvideAsyncApiPayload, compression bool) (*ProvideResponse, error) {
+// ProvideAsyncAPI posts an AsyncAPI specification.
+func (c *SanshainClient) ProvideAsyncAPI(payload ProvideAsyncAPIPayload, compression bool) (*ProvideResponse, error) {
 	return c.provideDropping("/provide/asyncapi", &payload, &payload.Origin, &payload.Annotations, compression)
 }
 
+// ProvideProto posts a gRPC proto file.
 func (c *SanshainClient) ProvideProto(payload ProvideProtoPayload, compression bool) (*ProvideResponse, error) {
 	return c.provideDropping("/provide/grpc", &payload, &payload.Origin, &payload.Annotations, compression)
 }
@@ -573,8 +595,13 @@ func (c *SanshainClient) postProvide(path string, payload any, compression bool)
 		return nil, c.provideFailure(resp, respBody)
 	}
 
+	return decodeProvideResponse(respBody)
+}
+
+// decodeProvideResponse reads the body of a successful provide.
+func decodeProvideResponse(body string) (*ProvideResponse, error) {
 	var provideResp ProvideResponse
-	if err := json.Unmarshal([]byte(respBody), &provideResp); err != nil {
+	if err := json.Unmarshal([]byte(body), &provideResp); err != nil {
 		return nil, err
 	}
 	return &provideResp, nil
@@ -646,6 +673,7 @@ func (c *SanshainClient) catalogFailure(resp *http.Response, body string) error 
 	return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, sanitize(body))
 }
 
+// Require fetches one endpoint of a producer at a version, without an ETag.
 func (c *SanshainClient) Require(consumerName, producerName, version, path, method string, dryRun bool, apiType string) (string, error) {
 	result, err := c.RequireWithEtag(consumerName, producerName, version, path, method, dryRun, apiType, "", Stream{}, "", nil)
 	if err != nil {
@@ -747,6 +775,8 @@ func (c *SanshainClient) RequireWithEtag(consumerName, producerName, version, re
 	return &RequireResult{Content: body, Etag: responseEtag, NotModified: false}, nil
 }
 
+// RequireBundle fetches several endpoints of a producer as one document,
+// without an ETag.
 func (c *SanshainClient) RequireBundle(payload RequireBundlePayload, compression bool) (string, error) {
 	result, err := c.RequireBundleWithEtag(payload, compression, "")
 	if err != nil {
@@ -755,8 +785,10 @@ func (c *SanshainClient) RequireBundle(payload RequireBundlePayload, compression
 	return result.Content, nil
 }
 
+// RequireBundleWithEtag fetches a bundle, sending etag so that the service can
+// answer that nothing changed.
 func (c *SanshainClient) RequireBundleWithEtag(payload RequireBundlePayload, compression bool, etag string) (*RequireResult, error) {
-	payload.ApiType = cmp.Or(payload.ApiType, "openapi")
+	payload.APIType = cmp.Or(payload.APIType, "openapi")
 	payload.Annotations = c.annotationsToSend(payload.Annotations, false)
 	headers := make(http.Header)
 	if etag != "" {

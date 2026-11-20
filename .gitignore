@@ -9,5 +9,6 @@
 # Test binary
 *.test
 
-# Coverage
+# Coverage reports of the local runs and of CI; the floors and the badge are committed.
 *.out
+/coverage

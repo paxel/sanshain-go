@@ -3,6 +3,11 @@
 This file contains historical changelog entries for sanshain-go.
 For recent changes, see [CHANGELOG.md](CHANGELOG.md).
 
+## [2.6.0] - 2026-11-12
+
+### Changed
+- Requires Go 1.26 or newer to build and install (was 1.23).
+
 ## [2.5.0] - 2026-11-11
 
 ### Added

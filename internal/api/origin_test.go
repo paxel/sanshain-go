@@ -19,7 +19,7 @@ func TestResolveOrigin_NothingKnownIsZero(t *testing.T) {
 	if !o.IsZero() {
 		t.Fatalf("want zero origin, got %+v", o)
 	}
-	b, _ := json.Marshal(ProvidePayload{ProducerName: "p", OpenApiYaml: "x", Stability: "snapshot"})
+	b, _ := json.Marshal(ProvidePayload{ProducerName: "p", OpenAPIYaml: "x", Stability: "snapshot"})
 	if string(b) != `{"producername":"p","openapi_yaml":"x","stability":"snapshot"}` {
 		t.Errorf("a zero origin must add no fields: %s", b)
 	}
@@ -72,7 +72,7 @@ func TestOrigin_IsFlattenedIntoEveryProvidePayload(t *testing.T) {
 	o := Origin{ChangeURL: "https://git/pull/7", Tickets: []string{"ORD-7"}, Note: "why"}
 	for _, p := range []any{
 		ProvidePayload{ProducerName: "p", Origin: o},
-		ProvideAsyncApiPayload{ProducerName: "p", Origin: o},
+		ProvideAsyncAPIPayload{ProducerName: "p", Origin: o},
 		ProvideProtoPayload{ProducerName: "p", Origin: o},
 	} {
 		b, _ := json.Marshal(p)
@@ -104,7 +104,7 @@ func TestProvide_RepeatsWithoutTheOriginWhenAnOldServerRefusesIt(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewSanshainClient(srv.URL, "", false)
-	resp, err := c.Provide(ProvidePayload{ProducerName: "p", OpenApiYaml: "x", Stability: "snapshot", Origin: Origin{Note: "why"}}, false)
+	resp, err := c.Provide(ProvidePayload{ProducerName: "p", OpenAPIYaml: "x", Stability: "snapshot", Origin: Origin{Note: "why"}}, false)
 	if err != nil || resp == nil || resp.Version != "1.0.0" {
 		t.Fatalf("want the repeated provide to succeed, got %v, %v", resp, err)
 	}

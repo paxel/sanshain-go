@@ -1,0 +1,58 @@
+name: CI
+
+# sanshain-go's gates. The standard's part comes from paxel/gates: the OSV gate, the Go gate
+# (gofmt, golangci-lint, tests under the race detector, coverage ratchet) and SonarQube Cloud.
+# The job on the oldest supported Go is the repository's own (docs/adr/0001-move-to-gates.md).
+# A branch gets its run through its pull request; a run per push as well would be the same
+# jobs twice, and SonarQube Cloud analyses only the default branch and pull requests.
+on:
+  push:
+    branches: [summer]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Known vulnerabilities and licences of every dependency: osv-scanner decided by gates'
+  # osv_gate.py. What is accepted stands in osv-scanner.toml.
+  vulns:
+    uses: paxel/gates/.github/workflows/vulns.yml@02a81ad45b815cbed94f9bb6841424a624e8155f # v1.2.0
+
+  # On the Go release the toolchain line of go.mod pins. The tests run on Linux; the release
+  # also ships binaries for macOS and Windows, so the code is built and vetted for those.
+  go:
+    uses: paxel/gates/.github/workflows/go.yml@02a81ad45b815cbed94f9bb6841424a624e8155f # v1.2.0
+    with:
+      cross: |
+        darwin/amd64
+        darwin/arm64
+        windows/amd64
+
+  # The `go` line of go.mod promises this floor, so it is built and tested, not just declared.
+  # Keep in sync with that line.
+  oldest:
+    name: Oldest Go (1.26)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26"
+      # Named explicitly: the toolchain line of go.mod would otherwise pick the pinned release.
+      - name: Tests
+        env:
+          GOTOOLCHAIN: local
+        run: go test ./...
+
+  sonar:
+    needs: go
+    uses: paxel/gates/.github/workflows/sonar.yml@02a81ad45b815cbed94f9bb6841424a624e8155f # v1.2.0
+    secrets:
+      sonar-token: ${{ secrets.SQ_TOKEN }}

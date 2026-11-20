@@ -165,7 +165,7 @@ func TestBestEffort_ABrokenConfigsOwnBestEffortDoesNotCount(t *testing.T) {
 // Best effort for a broken file is a noop: no request reaches the service.
 func TestBestEffort_ABrokenConfigMakesNoCall(t *testing.T) {
 	var calls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		calls.Add(1)
 	}))
 	t.Cleanup(srv.Close)

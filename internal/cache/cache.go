@@ -1,3 +1,5 @@
+// Package cache keeps the require state file: the ETag of every require, so
+// that an unchanged endpoint is not downloaded again.
 package cache
 
 import (
@@ -10,20 +12,25 @@ import (
 
 const cacheFileName = ".sanshain-cache.json"
 
+// RequireEntry is the state of one require: its ETag and when it was fetched.
 type RequireEntry struct {
 	Etag        string `json:"etag"`
 	LastFetched string `json:"last_fetched"`
 }
 
-type CacheState struct {
+// State is the content of the state file.
+type State struct {
 	Requires map[string]*RequireEntry `json:"requires"`
 }
 
+// SanshainCache is the state file and what was read from it.
 type SanshainCache struct {
 	cacheFile string
-	State     CacheState
+	State     State
 }
 
+// NewSanshainCache reads the state file in cacheDir. A file that is missing
+// or cannot be read gives an empty state.
 func NewSanshainCache(cacheDir string) *SanshainCache {
 	c := &SanshainCache{
 		cacheFile: filepath.Join(cacheDir, cacheFileName),
@@ -33,19 +40,26 @@ func NewSanshainCache(cacheDir string) *SanshainCache {
 }
 
 func (c *SanshainCache) load() {
-	c.State = CacheState{
-		Requires: make(map[string]*RequireEntry),
-	}
 	data, err := os.ReadFile(c.cacheFile)
 	if err != nil {
+		c.State = State{Requires: make(map[string]*RequireEntry)}
 		return
 	}
-	_ = json.Unmarshal(data, &c.State)
-	if c.State.Requires == nil {
-		c.State.Requires = make(map[string]*RequireEntry)
-	}
+	c.State = decodeState(data)
 }
 
+// decodeState reads the content of the state file. What cannot be read counts
+// as absent, so the state always has its map of requires.
+func decodeState(data []byte) State {
+	state := State{Requires: make(map[string]*RequireEntry)}
+	_ = json.Unmarshal(data, &state)
+	if state.Requires == nil {
+		state.Requires = make(map[string]*RequireEntry)
+	}
+	return state
+}
+
+// Save writes the state file, creating its directory.
 func (c *SanshainCache) Save() error {
 	dir := filepath.Dir(c.cacheFile)
 	if err := os.MkdirAll(dir, 0750); err != nil {
@@ -58,10 +72,13 @@ func (c *SanshainCache) Save() error {
 	return os.WriteFile(c.cacheFile, data, 0600)
 }
 
+// GetRequireEntry returns the state of the require with this key, nil when
+// there is none.
 func (c *SanshainCache) GetRequireEntry(key string) *RequireEntry {
 	return c.State.Requires[key]
 }
 
+// UpdateRequireEntry records etag for the require with this key, fetched now.
 func (c *SanshainCache) UpdateRequireEntry(key, etag string) {
 	c.State.Requires[key] = &RequireEntry{
 		Etag:        etag,
